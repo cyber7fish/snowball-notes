@@ -1,0 +1,37 @@
+paths:
+  db: "./data/snowball.db"
+  log: "./logs/snowball.jsonl"
+
+vault:
+  path: "./vault"
+  inbox_dir: "Inbox"
+  archive_dir: "Archive/Conversations"
+  atomic_dir: "Knowledge/Atomic"
+
+intake:
+  transcript_dir: "~/.codex/sessions"
+  parser_version: "v1"
+  min_response_length: 120
+  min_confidence_to_run: 0.50
+
+agent:
+  model: "heuristic-v1"
+  max_steps: 8
+  prompt_version: "agent_system/v1.md"
+  max_writes_per_run: 1
+  max_appends_per_run: 1
+
+retrieval:
+  top_k: 5
+  append_threshold: 0.82
+  review_threshold: 0.62
+
+guardrails:
+  min_confidence_for_note: 0.70
+  min_confidence_for_append: 0.85
+
+worker:
+  poll_interval_seconds: 10
+  claim_timeout_seconds: 300
+  max_retries: 3
+
