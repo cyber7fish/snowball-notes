@@ -26,13 +26,13 @@ snowball-notes/
 ## Quick start
 
 ```bash
-cd /Users/7fish/project/snowball-notes
-python3 -m unittest discover -s tests
+cd snowball-notes
+PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m snowball_notes.cli worker --once
 PYTHONPATH=src python3 -m snowball_notes.cli status
 ```
 
-The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update [config.yaml](/Users/7fish/project/snowball-notes/config.yaml) to point at your real Obsidian vault when you are ready.
+The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
 ## Commands
 
@@ -47,4 +47,3 @@ The default configuration writes runtime data under `./data`, logs under `./logs
 ## Design notes
 
 This implementation follows the runtime shape from `snowball-notes-final.md`, but fixes the state handoff around commit validation. Validation happens before the `proposed_actions -> committing` transition so rejected proposal batches can move cleanly to `flagged`.
-
