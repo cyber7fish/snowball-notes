@@ -54,7 +54,84 @@ class TranscriptParserTests(unittest.TestCase):
             self.assertIn("claim-based queue", event.assistant_final_answer)
             self.assertGreaterEqual(event.source_confidence, 0.8)
 
+    def test_parse_payload_phase_final_answer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_file = Path(temp_dir) / "session.jsonl"
+            lines = [
+                {
+                    "timestamp": "2026-03-07T04:24:18.100Z",
+                    "type": "session_meta",
+                    "payload": {"id": "conv_456", "cwd": "/tmp/project", "originator": "codex_cli_rs", "cli_version": "0.111.0"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:19.100Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started", "turn_id": "turn_002"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:20.100Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "How do I fix a parser bug?"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:22.100Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Read the current transcript schema and accept both payload and record phases.",
+                        "phase": "final_answer",
+                    },
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:23.100Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete", "turn_id": "turn_002"},
+                },
+            ]
+            session_file.write_text("\n".join(json.dumps(line, ensure_ascii=False) for line in lines), encoding="utf-8")
+            events = parse_session_file(session_file)
+            self.assertEqual(len(events), 1)
+            self.assertIn("payload and record phases", events[0].assistant_final_answer)
+            self.assertGreaterEqual(events[0].source_confidence, 0.8)
+
+    def test_task_complete_falls_back_to_last_agent_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_file = Path(temp_dir) / "session.jsonl"
+            lines = [
+                {
+                    "timestamp": "2026-03-07T04:24:18.100Z",
+                    "type": "session_meta",
+                    "payload": {"id": "conv_789", "cwd": "/tmp/project", "originator": "codex_cli_rs", "cli_version": "0.111.0"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:19.100Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started", "turn_id": "turn_003"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:20.100Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "How do I recover from stale intake rows?"},
+                },
+                {
+                    "timestamp": "2026-03-07T04:24:23.100Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "turn_id": "turn_003",
+                        "last_agent_message": (
+                            "Use the task_complete fallback when the final answer event is missing so the "
+                            "turn still reaches the queue with a trustworthy answer."
+                        ),
+                    },
+                },
+            ]
+            session_file.write_text("\n".join(json.dumps(line, ensure_ascii=False) for line in lines), encoding="utf-8")
+            events = parse_session_file(session_file)
+            self.assertEqual(len(events), 1)
+            self.assertIn("task_complete fallback", events[0].assistant_final_answer)
+            self.assertGreaterEqual(events[0].source_confidence, 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()
-

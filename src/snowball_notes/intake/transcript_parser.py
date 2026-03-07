@@ -32,19 +32,29 @@ def parse_session_file(path: Path, parser_version: str = "v1") -> list[StandardE
         if record_type == "session_meta":
             session_meta = payload
             continue
-        if record_type != "event_msg":
-            continue
-        subtype = payload.get("type")
-        if subtype == "task_started":
+        if record_type == "event_msg" and payload.get("type") == "task_started":
             current = TurnBuffer(turn_id=payload["turn_id"], raw_events=[record])
             continue
         if current is None:
             continue
         current.raw_events.append(record)
+        if record_type == "response_item":
+            if payload.get("type") != "message" or payload.get("role") != "assistant":
+                continue
+            if _record_phase(record, payload) != "final_answer":
+                continue
+            final_answer = _extract_response_text(payload.get("content", []))
+            if final_answer:
+                current.assistant_final_answer = final_answer
+                current.displayed_at = record.get("timestamp", "")
+            continue
+        if record_type != "event_msg":
+            continue
+        subtype = payload.get("type")
         if subtype == "user_message":
             current.user_message = payload.get("message", "")
             continue
-        if subtype == "agent_message" and record.get("phase") == "final_answer":
+        if subtype == "agent_message" and _record_phase(record, payload) == "final_answer":
             current.assistant_final_answer = payload.get("message", "")
             current.displayed_at = record.get("timestamp", "")
             continue
@@ -56,6 +66,9 @@ def parse_session_file(path: Path, parser_version: str = "v1") -> list[StandardE
         if payload.get("turn_id") != current.turn_id:
             current = None
             continue
+        if not current.assistant_final_answer and payload.get("last_agent_message"):
+            current.assistant_final_answer = payload["last_agent_message"]
+            current.displayed_at = record.get("timestamp", "")
         displayed_at = current.displayed_at or record.get("timestamp", "")
         source_completeness = (
             "full"
@@ -94,3 +107,17 @@ def parse_session_file(path: Path, parser_version: str = "v1") -> list[StandardE
         current = None
     return events
 
+
+def _record_phase(record: dict[str, Any], payload: dict[str, Any]) -> str:
+    return str(payload.get("phase") or record.get("phase") or "")
+
+
+def _extract_response_text(content: list[dict[str, Any]]) -> str:
+    chunks: list[str] = []
+    for item in content:
+        if item.get("type") != "output_text":
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text:
+            chunks.append(text)
+    return "".join(chunks)
