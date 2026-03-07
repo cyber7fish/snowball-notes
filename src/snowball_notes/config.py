@@ -60,6 +60,13 @@ class WorkerConfig:
 
 
 @dataclass
+class ReconcileConfig:
+    enabled: bool = True
+    run_on_startup: bool = True
+    schedule_cron: str = "0 3 * * *"
+
+
+@dataclass
 class SnowballConfig:
     project_root: Path
     paths: PathConfig = field(default_factory=PathConfig)
@@ -69,6 +76,7 @@ class SnowballConfig:
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
+    reconcile: ReconcileConfig = field(default_factory=ReconcileConfig)
 
     @property
     def db_path(self) -> Path:
@@ -95,6 +103,7 @@ class SnowballConfig:
             "retrieval": vars(self.retrieval),
             "guardrails": vars(self.guardrails),
             "worker": vars(self.worker),
+            "reconcile": vars(self.reconcile),
         }
 
 
@@ -162,4 +171,3 @@ def _apply_mapping(config: SnowballConfig, data: dict[str, Any]) -> None:
             for key, value in values.items():
                 if hasattr(target, key):
                     setattr(target, key, value)
-

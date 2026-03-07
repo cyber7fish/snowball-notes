@@ -10,7 +10,8 @@ Snowball Notes turns completed Codex turns into reviewable Obsidian notes with a
 - Heuristic agent runtime with tool calls, guardrails, proposals, trace, and replay bundle
 - Vault writer for archive, create, and append flows
 - Review CLI for flagged runs
-- Status CLI and reconciliation helper
+- Status CLI with agent/parser/reconcile health metrics
+- Startup reconciliation audit and confidence calibration feedback loop
 - `unittest` coverage for confidence, parser, state machine, and end-to-end runtime
 
 ## Project layout
@@ -29,7 +30,8 @@ snowball-notes/
 cd snowball-notes
 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m snowball_notes.cli worker --once
-PYTHONPATH=src python3 -m snowball_notes.cli status
+PYTHONPATH=src python3 -m snowball_notes.cli status --days 7
+PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
 ```
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
@@ -41,8 +43,10 @@ The default configuration writes runtime data under `./data`, logs under `./logs
 - `review list`: show pending review actions
 - `review approve <review_id>`: mark a flagged case approved
 - `review reject <review_id>`: mark a flagged case rejected
-- `status`: print queue and runtime metrics
+- `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
 - `replay <trace_id>`: dump a saved replay bundle
+- `calibrate add-feedback <turn_id> <trustworthy|partial|bad_parse>`: record parser confidence feedback
+- `calibrate report`: summarize confidence calibration buckets and recommendations
 
 ## Design notes
 

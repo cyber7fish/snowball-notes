@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS review_actions (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS confidence_feedback (
+  feedback_id TEXT PRIMARY KEY,
+  turn_id TEXT NOT NULL,
+  source_confidence REAL NOT NULL,
+  human_label TEXT NOT NULL,
+  annotator TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   audit_id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

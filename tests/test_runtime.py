@@ -125,6 +125,28 @@ def _write_current_transcript(path: Path, user_message: str, answer: str) -> Non
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_worker_runs_startup_reconcile_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts)
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                self.assertIsNone(worker.run_once())
+                self.assertIsNone(worker.run_once())
+                reconcile_count = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM audit_logs
+                    WHERE event_type = 'reconcile_completed'
+                    """
+                )
+                self.assertEqual(reconcile_count["count"], 1)
+            finally:
+                db.close()
+
     def test_worker_creates_note_and_trace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

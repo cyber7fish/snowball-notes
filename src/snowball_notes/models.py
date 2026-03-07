@@ -324,3 +324,6 @@ class ReconcileReport:
 
     def ok(self) -> bool:
         return not self.orphan_files and not self.missing_files
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
