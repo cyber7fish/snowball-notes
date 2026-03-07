@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+
 from ..config import SnowballConfig
 from ..models import ModelResponse, ToolCall, TokenUsage
-from ..utils import new_id
+from ..utils import new_id, normalize_text
 from .tools import compose_append_content, compose_archive_payload, compose_atomic_note_content
 
 
@@ -14,6 +16,7 @@ class HeuristicModelAdapter:
         self.config = config
 
     def respond(self, event, state, messages, tools, step_index: int) -> ModelResponse:
+        recent_actions = self._recent_actions(messages, state)
         if self._last_result(state, "assess_turn_value") is None:
             return self._call("Assess the turn value", "assess_turn_value", {})
 
@@ -32,6 +35,8 @@ class HeuristicModelAdapter:
             return self._call("Extract reusable knowledge from the turn.", "extract_knowledge_points", {})
 
         extracted = self._last_result(state, "extract_knowledge_points") or {}
+        if self._duplicate_created_title(recent_actions, extracted.get("candidate_title", "")):
+            return self._end("Skip because this conversation already created a highly similar note.")
         if self._last_result(state, "search_similar_notes") is None:
             return self._call(
                 "Search for similar notes before deciding whether to create or append.",
@@ -43,6 +48,8 @@ class HeuristicModelAdapter:
         top_match = search_results[0] if search_results else None
 
         if top_match and top_match["similarity"] >= self.config.retrieval.append_threshold:
+            if self._note_already_touched(recent_actions, top_match["note_id"]):
+                return self._end("Skip because this conversation already wrote to the matching note.")
             if self._last_result(state, "read_note") is None:
                 return self._call(
                     "Read the strongest candidate note before appending.",
@@ -114,3 +121,45 @@ class HeuristicModelAdapter:
     def _has_action(self, state, action_type: str) -> bool:
         return any(proposal.action_type == action_type for proposal in state.proposals)
 
+    def _recent_actions(self, messages, state) -> list[dict]:
+        if messages:
+            content = messages[0].get("content") or {}
+            recent_actions = content.get("recent_actions")
+            if isinstance(recent_actions, list):
+                return [item for item in recent_actions if isinstance(item, dict)]
+        actions = []
+        for turn in state.session_memory.processed_turns:
+            actions.append(
+                {
+                    "turn_id": turn.turn_id,
+                    "final_decision": turn.final_decision,
+                    "note_id": turn.note_id,
+                    "action_type": turn.action_type,
+                    "note_title": turn.note_title,
+                }
+            )
+        return actions
+
+    def _note_already_touched(self, recent_actions: list[dict], note_id: str) -> bool:
+        for action in recent_actions:
+            if action.get("note_id") != note_id:
+                continue
+            if action.get("action_type") in {"create_note", "append_note"}:
+                return True
+        return False
+
+    def _duplicate_created_title(self, recent_actions: list[dict], title: str) -> bool:
+        title_norm = normalize_text(title)
+        if not title_norm:
+            return False
+        for action in recent_actions:
+            if action.get("action_type") != "create_note":
+                continue
+            note_title = normalize_text(action.get("note_title") or "")
+            if not note_title:
+                continue
+            if title_norm == note_title:
+                return True
+            if SequenceMatcher(None, title_norm, note_title).ratio() >= 0.94:
+                return True
+        return False

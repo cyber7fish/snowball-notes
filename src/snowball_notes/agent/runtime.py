@@ -213,6 +213,7 @@ class SnowballAgent:
         )
 
     def _build_initial_messages(self, event, session_memory) -> list[dict]:
+        recent_actions = self._recent_session_actions(session_memory)
         return [
             {
                 "role": "user",
@@ -222,9 +223,50 @@ class SnowballAgent:
                     "assistant_final_answer": event.assistant_final_answer,
                     "source_confidence": event.source_confidence,
                     "previous_turns": len(session_memory.processed_turns),
+                    "session_context": self._format_session_context(session_memory),
+                    "recent_actions": recent_actions,
                 },
             }
         ]
+
+    def _recent_session_actions(self, session_memory) -> list[dict]:
+        recent = []
+        seen = set()
+        for turn in session_memory.processed_turns:
+            key = (turn.turn_id, turn.action_type, turn.note_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            recent.append(
+                {
+                    "turn_id": turn.turn_id,
+                    "final_decision": turn.final_decision,
+                    "note_id": turn.note_id,
+                    "action_type": turn.action_type,
+                    "note_title": turn.note_title,
+                }
+            )
+        return recent[:5]
+
+    def _format_session_context(self, session_memory) -> str:
+        recent_actions = self._recent_session_actions(session_memory)
+        if not recent_actions:
+            return "No prior turns from this conversation have been processed yet."
+        lines = [
+            f"{len(session_memory.processed_turns)} prior turn records found in this conversation.",
+            "Recent note actions:",
+        ]
+        for item in recent_actions:
+            summary = item["final_decision"]
+            if item["action_type"]:
+                summary = f"{summary} via {item['action_type']}"
+            if item["note_title"]:
+                summary = f"{summary} on {item['note_title']}"
+            elif item["note_id"]:
+                summary = f"{summary} on {item['note_id']}"
+            lines.append(f"- {item['turn_id']}: {summary}")
+        lines.append("Do not repeat create or append actions against the same note within this conversation.")
+        return "\n".join(lines)
 
     def _persist_trace_and_replay(self, trace, state) -> None:
         save_agent_trace(self.db, trace)
@@ -294,4 +336,3 @@ class SnowballAgent:
         if any(proposal.action_type == "archive_turn" for proposal in state.proposals):
             return "archive_turn"
         return "completed"
-
