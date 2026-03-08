@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..config import SnowballConfig
+from .check import run_embedding_check
 from .local import LocalHashEmbeddingProvider
 from .sqlite_blob import SQLiteBlobVectorStore
 from .sqlite_vec import SqliteVecStore
@@ -26,4 +27,5 @@ __all__ = [
     "VoyageEmbeddingProvider",
     "build_embedding_provider",
     "build_vector_store",
+    "run_embedding_check",
 ]

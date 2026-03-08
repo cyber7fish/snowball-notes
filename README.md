@@ -35,6 +35,7 @@ cd snowball-notes
 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m snowball_notes.cli worker --once
 PYTHONPATH=src python3 -m snowball_notes.cli status --days 7
+PYTHONPATH=src python3 -m snowball_notes.cli embedding check
 PYTHONPATH=src python3 -m snowball_notes.cli eval load eval/fixtures/sample_cases.json --replace
 PYTHONPATH=src python3 -m snowball_notes.cli eval run
 PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
@@ -103,6 +104,15 @@ embedding:
 
 and export `VOYAGE_API_KEY`.
 
+To verify the configured provider and vector store end to end, run:
+
+```bash
+PYTHONPATH=src python3 -m snowball_notes.cli embedding check
+PYTHONPATH=src python3 -m snowball_notes.cli embedding check --provider voyage
+```
+
+The check performs a real embedding call for the selected provider and then does a vector-store round trip using a temporary probe vector.
+
 To run the review server, install the optional review dependencies first:
 
 ```bash
@@ -120,6 +130,7 @@ pip install -e ".[review]"
 - `review discard <review_id>`: resolve a review as intentionally discarded
 - `review reject <review_id>`: mark a flagged case rejected
 - `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
+- `embedding check [--provider local|voyage] [--vector-store sqlite_blob|sqlite_vec] [--text TEXT]`: verify provider and vector-store round-trip behavior
 - `replay <trace_id> [--mode dump|logical|live]`: dump or rerun a saved replay bundle
 - `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
 - `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report

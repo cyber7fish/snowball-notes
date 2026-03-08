@@ -17,7 +17,7 @@ from .calibrate.confidence_feedback import (
     render_calibration_report,
 )
 from .config import load_config
-from .embedding import build_embedding_provider, build_vector_store
+from .embedding import build_embedding_provider, build_vector_store, run_embedding_check
 from .eval import EvalRunner, import_eval_cases, load_eval_cases, load_eval_report, render_eval_report
 from .observability.logger import JsonlLogger
 from .observability.metrics import render_status
@@ -91,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
     replay_parser.add_argument("trace_id")
     replay_parser.add_argument("--mode", choices=["dump", "logical", "live"], default="dump")
     subparsers.add_parser("reconcile")
+    embedding_parser = subparsers.add_parser("embedding")
+    embedding_subparsers = embedding_parser.add_subparsers(dest="embedding_command", required=True)
+    embedding_check_parser = embedding_subparsers.add_parser("check")
+    embedding_check_parser.add_argument("--provider", choices=["local", "voyage"], default=None)
+    embedding_check_parser.add_argument("--vector-store", choices=["sqlite_blob", "sqlite_vec"], default=None)
+    embedding_check_parser.add_argument("--text", default=None)
     eval_parser = subparsers.add_parser("eval")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command", required=True)
     eval_load_parser = eval_subparsers.add_parser("load")
@@ -201,6 +207,21 @@ def main(argv: list[str] | None = None) -> int:
             report = reconcile_vault_and_db(vault.root, db)
             print(json.dumps({"orphan_files": report.orphan_files, "missing_files": report.missing_files}, ensure_ascii=False, indent=2))
             return 0
+        if args.command == "embedding":
+            if args.embedding_command == "check":
+                try:
+                    result = run_embedding_check(
+                        config,
+                        db,
+                        provider_override=args.provider,
+                        vector_store_override=args.vector_store,
+                        text=args.text,
+                    )
+                except Exception as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0 if result.get("ok") else 1
         if args.command == "eval":
             if args.eval_command == "load":
                 imported = import_eval_cases(db, args.fixture_path, replace=args.replace)
