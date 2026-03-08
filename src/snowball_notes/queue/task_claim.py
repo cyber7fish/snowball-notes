@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
+
 from ..models import RunState, StandardEvent, TaskRecord
+from ..storage.audit import write_audit_log
 from ..utils import now_utc_iso
 
 
 def claim_next_task(db, worker_id: str, claim_timeout_seconds: int) -> tuple[TaskRecord, StandardEvent] | None:
     with db.transaction():
         stale_cutoff = f"-{int(claim_timeout_seconds)} seconds"
-        db.execute(
+        requeued = db.execute(
             """
             UPDATE tasks
             SET status = ?, claimed_by = NULL, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP
@@ -16,6 +19,13 @@ def claim_next_task(db, worker_id: str, claim_timeout_seconds: int) -> tuple[Tas
             """,
             (RunState.RECEIVED.value, RunState.PREPARED.value, stale_cutoff),
         )
+        if requeued.rowcount:
+            write_audit_log(
+                db,
+                "tasks_requeued",
+                {"count": requeued.rowcount, "claim_timeout_seconds": claim_timeout_seconds},
+                level="warn",
+            )
         row = db.fetchone(
             """
             SELECT task_id, event_id, status, retry_count, max_retries
@@ -61,5 +71,16 @@ def claim_next_task(db, worker_id: str, claim_timeout_seconds: int) -> tuple[Tas
             claimed_by=worker_id,
             claimed_at=now_utc_iso(),
         )
-        event = StandardEvent.from_dict(__import__("json").loads(event_row["payload_json"]))
+        event = StandardEvent.from_dict(json.loads(event_row["payload_json"]))
+        write_audit_log(
+            db,
+            "task_claimed",
+            {
+                "worker_id": worker_id,
+                "event_id": row["event_id"],
+                "retry_count": int(row["retry_count"]),
+            },
+            task_id=task.task_id,
+            turn_id=event.turn_id,
+        )
         return task, event

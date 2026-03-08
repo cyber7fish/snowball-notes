@@ -13,6 +13,7 @@ Snowball Notes turns completed Codex turns into reviewable Obsidian notes with a
 - Review CLI for flagged runs
 - Optional FastAPI review server for pending approvals, trace detail, and confidence feedback
 - Status CLI with agent/parser/reconcile health metrics
+- Structured JSONL lifecycle logs mirrored alongside SQLite audit logs
 - Sandbox eval runner with fixture import, score aggregation, review precision, and replay consistency metrics
 - Startup plus scheduled reconciliation audit and confidence calibration feedback loop
 - `unittest` coverage for confidence, parser, state machine, and end-to-end runtime

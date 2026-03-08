@@ -29,7 +29,16 @@ class SnowballWorker:
         self._maybe_run_startup_reconcile()
         self._maybe_run_scheduled_reconcile()
         events = collect_transcript_events(self.config, self.db, self._watch_state)
-        register_events(self.db, self.config, events)
+        enqueued = register_events(self.db, self.config, events)
+        write_audit_log(
+            self.db,
+            "worker_scan_completed",
+            {
+                "intake_mode": self.config.intake.mode,
+                "discovered_events": len(events),
+                "enqueued_tasks": enqueued,
+            },
+        )
         claimed = claim_next_task(self.db, self.worker_id, self.config.worker.claim_timeout_seconds)
         self.db.commit()
         if claimed is None:

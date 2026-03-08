@@ -6,6 +6,7 @@ from html import escape
 
 from ..calibrate.confidence_feedback import HUMAN_LABELS, record_confidence_feedback
 from ..config import load_config
+from ..observability.logger import JsonlLogger
 from ..review.cli import approve_review, update_review
 from ..storage.sqlite import Database
 from ..storage.vault import Vault
@@ -21,6 +22,7 @@ def build_review_app(config_path: str | None = None):
     config = load_config(config_path)
     db = Database(config.db_path)
     db.migrate()
+    db.event_logger = JsonlLogger(config.log_path)
     vault = Vault(config)
     @asynccontextmanager
     async def lifespan(_: FastAPI):  # pragma: no cover - framework hook

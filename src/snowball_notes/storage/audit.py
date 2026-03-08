@@ -17,6 +17,7 @@ def write_audit_log(
 ) -> None:
     if db is None:
         return
+    logger = getattr(db, "event_logger", None)
     db.execute(
         """
         INSERT INTO audit_logs (audit_id, event_type, level, trace_id, turn_id, task_id, detail_json)
@@ -24,4 +25,12 @@ def write_audit_log(
         """,
         (new_id("audit"), event_type, level, trace_id, turn_id, task_id, json.dumps(detail, ensure_ascii=False)),
     )
-
+    if logger is not None:
+        logger.log(
+            level,
+            event_type,
+            trace_id=trace_id,
+            turn_id=turn_id,
+            task_id=task_id,
+            detail=detail,
+        )

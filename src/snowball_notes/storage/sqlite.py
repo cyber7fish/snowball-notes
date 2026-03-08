@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 class Database:
     def __init__(self, path: Path):
         self.path = path
+        self.event_logger = None
         ensure_directory(path.parent)
         self._connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._connection.row_factory = sqlite3.Row

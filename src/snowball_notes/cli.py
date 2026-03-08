@@ -19,6 +19,7 @@ from .calibrate.confidence_feedback import (
 from .config import load_config
 from .embedding import build_embedding_provider, build_vector_store
 from .eval import EvalRunner, import_eval_cases, load_eval_cases, load_eval_report, render_eval_report
+from .observability.logger import JsonlLogger
 from .observability.metrics import render_status
 from .review.cli import approve_review, list_pending_reviews, update_review
 from .review.server import serve_review_app
@@ -31,6 +32,7 @@ def build_runtime(config_path: str | None = None, *, build_worker: bool = True):
     config = load_config(config_path)
     db = Database(config.db_path)
     db.migrate()
+    db.event_logger = JsonlLogger(config.log_path)
     vault = Vault(config)
     worker = None
     if build_worker:
