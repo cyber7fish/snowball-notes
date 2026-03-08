@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from ..config import SnowballConfig
 from ..models import AgentResult, ReplayBundle, RunState, ToolResult
 from ..storage.audit import write_audit_log
 from ..utils import now_utc_iso
+from .adapter import ModelRetryableError
 from .commit import Committer
 from .guardrails import check_guardrail
 from .memory import load_session_memory, update_session_memory
@@ -14,6 +16,10 @@ from .state import AgentState
 from .state_machine import transition_state
 from .tools import validated_tool_execute
 from .trace import create_trace, save_agent_trace
+
+
+class RetryExhaustedError(RuntimeError):
+    pass
 
 
 class SnowballAgent:
@@ -37,37 +43,39 @@ class SnowballAgent:
         try:
             transition_state(self.db, task.task_id, RunState.PREPARED, RunState.RUNNING)
             for step_index in range(self.config.agent.max_steps):
-                response = self.model_adapter.respond(
-                    event=event,
-                    state=state,
-                    messages=messages,
-                    tools=self.tool_registry,
-                    step_index=step_index,
-                )
+                response = self._respond_with_retry(event, state, messages, step_index)
+                state.model_context.pop("next_input_items", None)
+                if response.provider_response_id:
+                    state.model_context["previous_response_id"] = response.provider_response_id
                 if response.stop_reason == "end_turn":
+                    messages = self._advance_messages(messages, response, [])
                     break
                 if response.stop_reason != "tool_use":
                     state.is_terminated = True
                     state.terminal_reason = "unexpected_model_response"
                     break
+                tool_messages = []
+                followup_items = []
                 for tool_call in response.tool_use_blocks:
                     guardrail = check_guardrail(self.config, state, tool_call.name)
                     if not guardrail.allowed:
-                        observation = ToolResult.blocked(guardrail.reason)
+                        payload = {"blocked": True, "reason": guardrail.reason}
                         trace.record_step(
                             step_index=step_index,
                             runtime_state=RunState.RUNNING.value,
                             decision_summary=response.decision_summary,
                             tool_name=tool_call.name,
                             tool_input_json=json.dumps(tool_call.input, ensure_ascii=False),
-                            tool_result_json=json.dumps({"blocked": True, "reason": guardrail.reason}, ensure_ascii=False),
+                            tool_result_json=json.dumps(payload, ensure_ascii=False),
                             tool_success=False,
                             proposal_ids=[],
                             guardrail_blocked=True,
                             duration_ms=0,
                             usage=response.usage,
                         )
-                        state.tool_context.setdefault(tool_call.name, []).append({"blocked": True, "reason": guardrail.reason})
+                        state.tool_context.setdefault(tool_call.name, []).append(payload)
+                        tool_messages.append(self._tool_message(tool_call, payload))
+                        followup_items.append(self._tool_followup_item(tool_call.call_id, payload))
                         continue
                     proposal_count = len(state.proposals)
                     observation = validated_tool_execute(
@@ -93,6 +101,8 @@ class SnowballAgent:
                         }
                     )
                     state.tool_context.setdefault(tool_call.name, []).append(payload)
+                    tool_messages.append(self._tool_message(tool_call, payload))
+                    followup_items.append(self._tool_followup_item(tool_call.call_id, payload))
                     trace.record_step(
                         step_index=step_index,
                         runtime_state=RunState.RUNNING.value,
@@ -108,6 +118,11 @@ class SnowballAgent:
                     )
                     if state.is_terminated:
                         break
+                messages = self._advance_messages(messages, response, tool_messages)
+                if response.provider_response_id and followup_items and not state.is_terminated:
+                    state.model_context["next_input_items"] = followup_items
+                else:
+                    state.model_context.pop("next_input_items", None)
                 if state.is_terminated:
                     trace.finish("flagged", state.terminal_reason or "flagged", event.source_confidence)
                     transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FLAGGED, state.terminal_reason)
@@ -173,6 +188,14 @@ class SnowballAgent:
             self._persist_trace_and_replay(trace, state)
             self.db.commit()
             return AgentResult(state=RunState.FAILED_FATAL, reason=commit_result.reason)
+        except RetryExhaustedError as exc:
+            trace.finish("failed_retryable", str(exc), event.source_confidence)
+            current = self.db.fetchone("SELECT status FROM tasks WHERE task_id = ?", (task.task_id,))
+            if current and current["status"] == RunState.RUNNING.value:
+                transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FAILED_RETRYABLE, str(exc))
+            self._persist_trace_and_replay(trace, state)
+            self.db.commit()
+            return AgentResult(state=RunState.FAILED_RETRYABLE, reason=str(exc))
         except Exception as exc:
             write_audit_log(
                 self.db,
@@ -211,6 +234,54 @@ class SnowballAgent:
                 proposal.created_at,
             ),
         )
+
+    def _respond_with_retry(self, event, state, messages, step_index: int):
+        for attempt in range(self.config.agent.max_model_retries):
+            try:
+                return self.model_adapter.respond(
+                    event=event,
+                    state=state,
+                    messages=messages,
+                    tools=self.tool_registry,
+                    step_index=step_index,
+                )
+            except ModelRetryableError as exc:
+                if attempt + 1 >= self.config.agent.max_model_retries:
+                    raise RetryExhaustedError(str(exc)) from exc
+                time.sleep(2 ** attempt)
+
+    def _advance_messages(self, messages: list[dict], response, tool_messages: list[dict]) -> list[dict]:
+        assistant_message = {
+            "role": "assistant",
+            "content": {
+                "decision_summary": response.decision_summary,
+                "stop_reason": response.stop_reason,
+                "tool_calls": [
+                    {
+                        "call_id": tool_call.call_id,
+                        "name": tool_call.name,
+                        "input": tool_call.input,
+                    }
+                    for tool_call in response.tool_use_blocks
+                ],
+            },
+        }
+        return messages + [assistant_message] + tool_messages
+
+    def _tool_message(self, tool_call, payload: dict) -> dict:
+        return {
+            "role": "tool",
+            "call_id": tool_call.call_id,
+            "name": tool_call.name,
+            "content": payload,
+        }
+
+    def _tool_followup_item(self, call_id: str, payload: dict) -> dict:
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(payload, ensure_ascii=False),
+        }
 
     def _build_initial_messages(self, event, session_memory) -> list[dict]:
         recent_actions = self._recent_session_actions(session_memory)

@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from snowball_notes.cli import build_runtime
+from snowball_notes.review.cli import approve_review
 
 
 def _write_config(
@@ -297,7 +298,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(result.state.value, "flagged")
                 review = db.fetchone(
                     """
-                    SELECT final_action, final_target_note_id, reason
+                    SELECT final_action, final_target_note_id, suggested_action,
+                           suggested_target_note_id, suggested_payload_json, reason
                     FROM review_actions
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -305,6 +307,9 @@ class RuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(review["final_action"], "pending_review")
                 self.assertEqual(review["final_target_note_id"], "note_existing")
+                self.assertEqual(review["suggested_action"], "append_note")
+                self.assertEqual(review["suggested_target_note_id"], "note_existing")
+                self.assertIn("\"note_id\": \"note_existing\"", review["suggested_payload_json"])
                 self.assertEqual(review["reason"], "high_similarity_low_confidence")
                 task_row = db.fetchone("SELECT status FROM tasks LIMIT 1")
                 self.assertEqual(task_row["status"], "flagged")
@@ -314,6 +319,111 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(len(replay_rows), 1)
                 note_rows = db.fetchall("SELECT note_id FROM notes WHERE note_type = 'atomic'")
                 self.assertEqual(len(note_rows), 1)
+            finally:
+                db.close()
+
+    def test_review_approve_commits_append_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts, parser_version="legacy", min_confidence_for_append=0.95)
+            _write_transcript(
+                transcripts / "session.jsonl",
+                "How should I design an agent runtime with guarded side effects?",
+                (
+                    "Use a state machine, keep side effects behind proposals, add guardrails before tool "
+                    "execution, and persist replay bundles so the run stays debuggable while the vault remains safe."
+                ),
+                duplicate_task_complete=True,
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                existing_path, content_hash = vault.write_new_note(
+                    note_id="note_existing",
+                    title="How should I design an agent runtime with guarded side effects",
+                    content="## Summary\nExisting note body.",
+                    tags=["agent"],
+                    topics=["runtime"],
+                    source_event_ids=["evt_seed"],
+                    status="approved",
+                )
+                db.execute(
+                    """
+                    INSERT INTO notes (note_id, note_type, title, vault_path, content_hash, status, metadata_json, created_at, updated_at)
+                    VALUES (?, 'atomic', ?, ?, ?, 'approved', '{}', '2026-03-07T00:00:00+00:00', '2026-03-07T00:00:00+00:00')
+                    """,
+                    (
+                        "note_existing",
+                        "How should I design an agent runtime with guarded side effects",
+                        str(existing_path.resolve()),
+                        content_hash,
+                    ),
+                )
+                db.commit()
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "flagged")
+
+                review = db.fetchone(
+                    """
+                    SELECT review_id, final_action, final_target_note_id, suggested_action,
+                           suggested_target_note_id, suggested_payload_json
+                    FROM review_actions
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(review["final_action"], "pending_review")
+                self.assertEqual(review["suggested_action"], "append_note")
+                self.assertEqual(review["suggested_target_note_id"], "note_existing")
+                self.assertIn("\"note_id\": \"note_existing\"", review["suggested_payload_json"])
+                ok, detail = approve_review(db, vault, config, review["review_id"], reviewer="tester")
+                self.assertTrue(ok, detail)
+                self.assertEqual(detail, "note_existing")
+
+                resolved_review = db.fetchone(
+                    """
+                    SELECT final_action, final_target_note_id, reviewer
+                    FROM review_actions
+                    WHERE review_id = ?
+                    """,
+                    (review["review_id"],),
+                )
+                self.assertEqual(resolved_review["final_action"], "approve_append")
+                self.assertEqual(resolved_review["final_target_note_id"], "note_existing")
+                self.assertEqual(resolved_review["reviewer"], "tester")
+
+                proposal = db.fetchone(
+                    """
+                    SELECT action_type, status, target_note_id
+                    FROM action_proposals
+                    WHERE turn_id = 'turn_001'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(proposal["action_type"], "append_note")
+                self.assertEqual(proposal["status"], "committed")
+                self.assertEqual(proposal["target_note_id"], "note_existing")
+
+                note_row = db.fetchone(
+                    "SELECT status FROM notes WHERE note_id = 'note_existing'"
+                )
+                self.assertEqual(note_row["status"], "approved")
+                updated = existing_path.read_text(encoding="utf-8")
+                self.assertIn("## Updates", updated)
+                self.assertIn("status: approved", updated)
+
+                memory_row = db.fetchone(
+                    """
+                    SELECT final_decision
+                    FROM session_turns
+                    WHERE conversation_id = 'conv_123' AND turn_id = 'turn_001'
+                    """
+                )
+                self.assertEqual(memory_row["final_decision"], "append_note")
             finally:
                 db.close()
 

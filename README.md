@@ -36,12 +36,34 @@ PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
+If no config file is present, the runtime falls back to the local `heuristic-v1` adapter. The checked-in `config.yaml` is preconfigured for DeepSeek. To run a real tool-calling model with OpenAI Responses instead, set:
+
+```yaml
+agent:
+  provider: "openai_responses"
+  model: "gpt-5.2-codex"
+```
+
+and export `OPENAI_API_KEY` before starting the worker.
+
+To run against DeepSeek's tool-calling chat API, set:
+
+```yaml
+agent:
+  provider: "deepseek_v3"
+  model: "deepseek-chat"
+  api_key_env: "DEEPSEEK_API_KEY"
+  api_base_url: "https://api.deepseek.com/chat/completions"
+```
+
+and export `DEEPSEEK_API_KEY` before starting the worker.
+
 ## Commands
 
 - `worker --once`: scan transcripts, enqueue events, claim one task, and run the agent once
 - `worker --forever`: continuous polling worker
 - `review list`: show pending review actions
-- `review approve <review_id>`: mark a flagged case approved
+- `review approve <review_id> [--action create|append|archive] [--note-id NOTE_ID] [--title TITLE]`: generate a proposal from a pending review and commit it
 - `review reject <review_id>`: mark a flagged case rejected
 - `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
 - `replay <trace_id>`: dump a saved replay bundle

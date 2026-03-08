@@ -51,10 +51,10 @@ class Committer:
                     self.db.execute(
                         """
                         UPDATE action_proposals
-                        SET status = 'committed', committed_at = ?
+                        SET status = 'committed', committed_at = ?, target_note_id = ?
                         WHERE proposal_id = ?
                         """,
-                        (proposal.committed_at, proposal.proposal_id),
+                        (proposal.committed_at, proposal.target_note_id, proposal.proposal_id),
                     )
             return CommitResult.completed(committed_note_ids)
         except OSError as exc:
@@ -146,4 +146,3 @@ class Committer:
             proposal.target_note_id = note_id
             return note_id
         raise ValueError(f"unknown action_type {proposal.action_type}")
-

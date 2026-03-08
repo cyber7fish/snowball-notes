@@ -87,6 +87,40 @@ class Vault:
     def content_hash(self, note_path: str | Path) -> str:
         return sha256_text(self.read_note(note_path))
 
+    def update_note_status(self, note_path: str | Path, status: str) -> str:
+        path = Path(note_path)
+        existing = safe_read_text(path)
+        if not existing.startswith("---\n"):
+            return sha256_text(existing)
+        lines = existing.splitlines()
+        try:
+            end_index = lines.index("---", 1)
+        except ValueError:
+            return sha256_text(existing)
+        frontmatter = lines[1:end_index]
+        updated = []
+        status_seen = False
+        timestamp_seen = False
+        for line in frontmatter:
+            if line.startswith("status:"):
+                updated.append(f"status: {status}")
+                status_seen = True
+                continue
+            if line.startswith("updated_at:"):
+                updated.append(f"updated_at: {now_utc_iso()}")
+                timestamp_seen = True
+                continue
+            updated.append(line)
+        if not status_seen:
+            updated.append(f"status: {status}")
+        if not timestamp_seen:
+            updated.append(f"updated_at: {now_utc_iso()}")
+        rendered = "\n".join(["---", *updated, "---", *lines[end_index + 1 :]])
+        if existing.endswith("\n"):
+            rendered += "\n"
+        write_atomic_text(path, rendered)
+        return sha256_text(rendered)
+
     def _frontmatter(self, payload: dict[str, Any]) -> str:
         lines = ["---"]
         for key, value in payload.items():
@@ -98,4 +132,3 @@ class Vault:
                 lines.append(f"{key}: {value}")
         lines.append("---")
         return "\n".join(lines)
-

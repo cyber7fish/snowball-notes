@@ -20,4 +20,4 @@ class AgentState:
     tool_results_for_replay: list[dict[str, Any]] = field(default_factory=list)
     knowledge_snapshot_refs: list[dict[str, Any]] = field(default_factory=list)
     tool_context: dict[str, list[Any]] = field(default_factory=dict)
-
+    model_context: dict[str, Any] = field(default_factory=dict)

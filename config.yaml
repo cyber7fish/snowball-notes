@@ -15,11 +15,14 @@ intake:
   min_confidence_to_run: 0.50
 
 agent:
-  model: "heuristic-v1"
+  provider: "deepseek_v3"
+  model: "deepseek-chat"
   max_steps: 8
   prompt_version: "agent_system/v1.md"
   max_writes_per_run: 1
   max_appends_per_run: 1
+  api_key_env: "DEEPSEEK_API_KEY"
+  api_base_url: "https://api.deepseek.com/chat/completions"
 
 retrieval:
   top_k: 5
@@ -34,4 +37,3 @@ worker:
   poll_interval_seconds: 10
   claim_timeout_seconds: 300
   max_retries: 3
-

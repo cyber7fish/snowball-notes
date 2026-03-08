@@ -155,6 +155,9 @@ CREATE TABLE IF NOT EXISTS review_actions (
   trace_id TEXT NOT NULL,
   final_action TEXT NOT NULL,
   final_target_note_id TEXT,
+  suggested_action TEXT,
+  suggested_target_note_id TEXT,
+  suggested_payload_json TEXT,
   reviewer TEXT,
   reason TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -194,6 +197,9 @@ class Database:
 
     def migrate(self) -> None:
         self._connection.executescript(SCHEMA_SQL)
+        self._ensure_column("review_actions", "suggested_action", "TEXT")
+        self._ensure_column("review_actions", "suggested_target_note_id", "TEXT")
+        self._ensure_column("review_actions", "suggested_payload_json", "TEXT")
         self._connection.commit()
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
@@ -228,6 +234,15 @@ class Database:
 
     def close(self) -> None:
         self._connection.close()
+
+    def _ensure_column(self, table: str, column: str, ddl: str) -> None:
+        columns = {
+            row["name"]
+            for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column in columns:
+            return
+        self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
     def upsert_cursor(self, session_file: str, last_mtime: float, scanned_at: str) -> None:
         self.execute(

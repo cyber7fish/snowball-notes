@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from .agent.adapter import HeuristicModelAdapter
+from .agent.adapter import build_model_adapter
 from .agent.memory import SQLiteKnowledgeIndex
 from .agent.orchestrator import SnowballWorker
 from .agent.runtime import SnowballAgent
@@ -17,7 +17,7 @@ from .calibrate.confidence_feedback import (
 )
 from .config import load_config
 from .observability.metrics import render_status
-from .review.cli import list_pending_reviews, update_review
+from .review.cli import approve_review, list_pending_reviews, update_review
 from .storage.reconcile import reconcile_vault_and_db
 from .storage.sqlite import Database
 from .storage.vault import Vault
@@ -30,7 +30,7 @@ def build_runtime(config_path: str | None = None):
     vault = Vault(config)
     knowledge_index = SQLiteKnowledgeIndex(db)
     tools = build_tool_registry(db, knowledge_index)
-    adapter = HeuristicModelAdapter(config)
+    adapter = build_model_adapter(config)
     agent = SnowballAgent(config, adapter, tools, vault, db)
     worker = SnowballWorker(config, db, agent, vault)
     return config, db, vault, worker
@@ -50,8 +50,13 @@ def main(argv: list[str] | None = None) -> int:
     review_subparsers.add_parser("list")
     approve_parser = review_subparsers.add_parser("approve")
     approve_parser.add_argument("review_id")
+    approve_parser.add_argument("--action", choices=["create", "append", "archive"], default=None)
+    approve_parser.add_argument("--note-id", default=None)
+    approve_parser.add_argument("--title", default=None)
+    approve_parser.add_argument("--reviewer", default="local")
     reject_parser = review_subparsers.add_parser("reject")
     reject_parser.add_argument("review_id")
+    reject_parser.add_argument("--reviewer", default="local")
 
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--days", type=int, default=7)
@@ -80,9 +85,27 @@ def main(argv: list[str] | None = None) -> int:
                 print(list_pending_reviews(db))
                 return 0
             if args.review_command == "approve":
-                return 0 if update_review(db, args.review_id, "approved") else 1
+                try:
+                    approved, detail = approve_review(
+                        db,
+                        vault,
+                        config,
+                        args.review_id,
+                        reviewer=args.reviewer,
+                        action=args.action,
+                        note_id=args.note_id,
+                        title=args.title,
+                    )
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
+                if not approved:
+                    print(detail, file=sys.stderr)
+                    return 1
+                print(f"approved {args.review_id}: {detail}")
+                return 0
             if args.review_command == "reject":
-                return 0 if update_review(db, args.review_id, "rejected") else 1
+                return 0 if update_review(db, args.review_id, "rejected", reviewer=args.reviewer) else 1
         if args.command == "status":
             print(render_status(db, window_days=args.days))
             return 0

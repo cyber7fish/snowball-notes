@@ -32,11 +32,17 @@ class IntakeConfig:
 
 @dataclass
 class AgentConfig:
+    provider: str = "heuristic"
     model: str = "heuristic-v1"
     max_steps: int = 8
     prompt_version: str = "agent_system/v1.md"
     max_writes_per_run: int = 1
     max_appends_per_run: int = 1
+    max_model_retries: int = 3
+    request_timeout_seconds: int = 60
+    api_key_env: str = "OPENAI_API_KEY"
+    api_base_url: str = "https://api.openai.com/v1/responses"
+    reasoning_effort: str = "medium"
 
 
 @dataclass

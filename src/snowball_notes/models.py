@@ -184,6 +184,7 @@ class ModelResponse:
     tool_use_blocks: list[ToolCall] = field(default_factory=list)
     decision_summary: str = ""
     usage: TokenUsage = field(default_factory=TokenUsage)
+    provider_response_id: str | None = None
 
 
 @dataclass

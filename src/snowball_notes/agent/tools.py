@@ -27,7 +27,7 @@ TOOL_SCHEMAS = {
     },
     "flag_for_review": {
         "required": ["reason"],
-        "types": {"reason": str, "conflict_note_id": str},
+        "types": {"reason": str, "conflict_note_id": str, "suggested_action": str, "suggested_payload": dict},
     },
 }
 
@@ -246,23 +246,39 @@ class FlagForReviewTool(Tool):
 
     def execute(self, payload: dict[str, Any], state) -> ToolResult:
         review_id = new_id("review")
+        suggested_payload = payload.get("suggested_payload")
+        if suggested_payload is not None and not isinstance(suggested_payload, dict):
+            suggested_payload = None
         self.db.execute(
             """
-            INSERT INTO review_actions (review_id, turn_id, trace_id, final_action, final_target_note_id, reason)
-            VALUES (?, ?, ?, 'pending_review', ?, ?)
+            INSERT INTO review_actions (
+              review_id, turn_id, trace_id, final_action, final_target_note_id,
+              suggested_action, suggested_target_note_id, suggested_payload_json, reason
+            )
+            VALUES (?, ?, ?, 'pending_review', ?, ?, ?, ?, ?)
             """,
             (
                 review_id,
                 state.event.turn_id,
                 state.trace_id,
                 payload.get("conflict_note_id"),
+                payload.get("suggested_action"),
+                _snapshot_target_note_id(payload.get("suggested_action"), suggested_payload, payload.get("conflict_note_id")),
+                json.dumps(suggested_payload, ensure_ascii=False) if suggested_payload is not None else None,
                 payload["reason"],
             ),
         )
         state.is_terminated = True
         state.terminal_reason = payload["reason"]
         state.proposals.clear()
-        return ToolResult.ok({"flagged": True, "review_id": review_id, "reason": payload["reason"]})
+        return ToolResult.ok(
+            {
+                "flagged": True,
+                "review_id": review_id,
+                "reason": payload["reason"],
+                "suggested_action": payload.get("suggested_action"),
+            }
+        )
 
 
 def build_tool_registry(db, knowledge_index) -> dict[str, Tool]:
@@ -298,6 +314,18 @@ def _validate_payload(tool_name: str, payload: dict[str, Any]) -> list[str]:
         if field_name in payload and not isinstance(payload[field_name], expected_type):
             errors.append(f"{field_name} must be {expected_type.__name__}")
     return errors
+
+
+def _snapshot_target_note_id(
+    suggested_action: str | None,
+    suggested_payload: dict[str, Any] | None,
+    conflict_note_id: str | None,
+) -> str | None:
+    if suggested_action == "append_note" and isinstance(suggested_payload, dict):
+        value = suggested_payload.get("note_id")
+        if isinstance(value, str) and value:
+            return value
+    return conflict_note_id
 
 
 def _guess_title(user_message: str, answer: str) -> str:
@@ -346,4 +374,3 @@ def _guess_topics(user_message: str, answer: str) -> list[str]:
         if token not in seen:
             seen.append(token)
     return seen[:6]
-
