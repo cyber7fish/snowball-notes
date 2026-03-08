@@ -29,6 +29,7 @@ TOOL_DESCRIPTIONS = {
     "propose_create_note": "Propose creating a new note without writing any side effects yet.",
     "propose_append_to_note": "Propose appending new knowledge into an existing note without writing yet.",
     "propose_archive_turn": "Propose archiving the turn as a conversation record.",
+    "propose_link_notes": "Propose adding a bidirectional relationship between two existing notes.",
     "flag_for_review": "Escalate the turn for human review and terminate the current run.",
 }
 
@@ -76,6 +77,23 @@ class HeuristicModelAdapter:
 
         search_results = self._last_result(state, "search_similar_notes") or []
         top_match = search_results[0] if search_results else None
+
+        if (
+            not state.proposals
+            and len(search_results) >= 2
+            and event.source_confidence >= self.config.guardrails.min_confidence_for_append
+            and self._should_link_notes(event, extracted, search_results[:2])
+        ):
+            primary = search_results[0]
+            secondary = search_results[1]
+            return self._call(
+                "Link two existing notes because the turn is explicitly describing their relationship.",
+                "propose_link_notes",
+                {
+                    "source_note_id": primary["note_id"],
+                    "target_note_id": secondary["note_id"],
+                },
+            )
 
         if top_match and top_match["similarity"] >= self.config.retrieval.append_threshold:
             if self._note_already_touched(recent_actions, top_match["note_id"]):
@@ -207,6 +225,57 @@ class HeuristicModelAdapter:
             if SequenceMatcher(None, title_norm, note_title).ratio() >= 0.94:
                 return True
         return False
+
+    def _should_link_notes(
+        self,
+        event,
+        extracted: dict[str, Any],
+        search_results: list[dict[str, Any]],
+    ) -> bool:
+        if len(search_results) < 2:
+            return False
+        first, second = search_results[0], search_results[1]
+        if first.get("note_id") == second.get("note_id"):
+            return False
+        combined = " ".join(
+            [
+                str(event.user_message or ""),
+                str(event.assistant_final_answer or ""),
+                str(extracted.get("summary") or ""),
+            ]
+        )
+        combined_norm = normalize_text(combined)
+        first_title_norm = normalize_text(str(first.get("title") or ""))
+        second_title_norm = normalize_text(str(second.get("title") or ""))
+        explicit_title_match = (
+            bool(first_title_norm)
+            and bool(second_title_norm)
+            and first_title_norm in combined_norm
+            and second_title_norm in combined_norm
+        )
+        first_similarity = float(first.get("similarity") or 0.0)
+        second_similarity = float(second.get("similarity") or 0.0)
+        if (
+            not explicit_title_match
+            and min(first_similarity, second_similarity) < max(self.config.retrieval.review_threshold - 0.1, 0.45)
+        ):
+            return False
+        combined = combined.lower()
+        link_terms = [
+            "link",
+            "linked",
+            "connect",
+            "connection",
+            "related",
+            "relationship",
+            "cross-reference",
+            "associate",
+            "关联",
+            "链接",
+            "连接",
+            "关系",
+        ]
+        return any(term in combined for term in link_terms)
 
 
 class _ToolAwareAdapter:

@@ -25,11 +25,14 @@ REVIEW_ACTION_ALIASES = {
     "append_note": "append_note",
     "archive": "archive_turn",
     "archive_turn": "archive_turn",
+    "link": "link_notes",
+    "link_notes": "link_notes",
 }
 APPROVAL_FINAL_ACTIONS = {
     "create_note": "approve_create",
     "append_note": "approve_append",
     "archive_turn": "approve_archive",
+    "link_notes": "approve_link",
 }
 
 
@@ -66,6 +69,7 @@ def approve_review(
     action: str | None = None,
     note_id: str | None = None,
     title: str | None = None,
+    resolved_as: str | None = None,
 ) -> tuple[bool, str]:
     review_row = db.fetchone(
         """
@@ -150,19 +154,45 @@ def approve_review(
         reviewer=reviewer,
         action_type=action_type,
         committed_note_id=committed_note_id,
+        resolved_as=resolved_as,
     )
     db.commit()
     return True, committed_note_id or action_type
 
 
-def update_review(db, review_id: str, final_action: str, reviewer: str = "local") -> bool:
+def update_review(
+    db,
+    review_id: str,
+    final_action: str,
+    reviewer: str = "local",
+    *,
+    final_target_note_id: str | None = None,
+    reason: str | None = None,
+) -> bool:
+    row = db.fetchone(
+        """
+        SELECT review_id, reason, final_target_note_id
+        FROM review_actions
+        WHERE review_id = ?
+        """,
+        (review_id,),
+    )
+    if row is None:
+        return False
     updated = db.execute(
         """
         UPDATE review_actions
-        SET final_action = ?, reviewer = ?, created_at = ?
+        SET final_action = ?, reviewer = ?, final_target_note_id = ?, reason = ?, created_at = ?
         WHERE review_id = ?
         """,
-        (final_action, reviewer, now_utc_iso(), review_id),
+        (
+            final_action,
+            reviewer,
+            final_target_note_id if final_target_note_id is not None else row["final_target_note_id"],
+            reason if reason is not None else row["reason"],
+            now_utc_iso(),
+            review_id,
+        ),
     )
     return updated.rowcount == 1
 
@@ -288,6 +318,25 @@ def _build_review_proposal(
             payload=payload,
             idempotency_key=f"review-archive:{event.turn_id}",
         )
+    if action_type == "link_notes":
+        if not target_note_id:
+            raise ValueError("link_notes requires target_note_id")
+        source_note_id = review_row.get("final_target_note_id") or _suggested_target_note_id(review_row)
+        if not source_note_id:
+            raise ValueError("link_notes requires a source note on the review row")
+        return ActionProposal(
+            proposal_id=new_id("proposal"),
+            trace_id=review_row["trace_id"],
+            turn_id=event.turn_id,
+            action_type="link_notes",
+            target_note_id=source_note_id,
+            payload={
+                "source_note_id": source_note_id,
+                "target_note_id": target_note_id,
+                "source_event_id": event.event_id,
+            },
+            idempotency_key=f"review-link:{source_note_id}:{target_note_id}",
+        )
     raise ValueError(f"unsupported action_type {action_type}")
 
 
@@ -349,6 +398,24 @@ def _proposal_from_snapshot(
             payload=payload,
             idempotency_key=f"review-archive:{sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))[:12]}",
         )
+    if action_type == "link_notes":
+        source_note_id = payload.get("source_note_id")
+        resolved_target_note_id = target_note_id or payload.get("target_note_id")
+        if not source_note_id or not resolved_target_note_id:
+            return None
+        return ActionProposal(
+            proposal_id=new_id("proposal"),
+            trace_id="",
+            turn_id="",
+            action_type="link_notes",
+            target_note_id=source_note_id,
+            payload={
+                "source_note_id": source_note_id,
+                "target_note_id": resolved_target_note_id,
+                "source_event_id": payload.get("source_event_id"),
+            },
+            idempotency_key=f"review-link:{source_note_id}:{resolved_target_note_id}",
+        )
     return None
 
 
@@ -405,8 +472,10 @@ def _finalize_approved_review(
     reviewer: str,
     action_type: str,
     committed_note_id: str,
+    resolved_as: str | None = None,
 ) -> None:
     note_title = None
+    related_note_ids = []
     if committed_note_id:
         note_row = db.fetchone(
             "SELECT note_id, title, vault_path FROM notes WHERE note_id = ?",
@@ -414,6 +483,7 @@ def _finalize_approved_review(
         )
         if note_row is not None:
             note_title = note_row["title"]
+            related_note_ids.append(note_row["note_id"])
             if action_type in {"create_note", "append_note"}:
                 content_hash = vault.update_note_status(note_row["vault_path"], "approved")
                 db.execute(
@@ -424,6 +494,28 @@ def _finalize_approved_review(
                     """,
                     (content_hash, now_utc_iso(), committed_note_id),
                 )
+    if action_type == "link_notes":
+        source_note_id = review_row.get("final_target_note_id") or _suggested_target_note_id(review_row)
+        target_note_id = _snapshot_payload(review_row).get("target_note_id") if _snapshot_payload(review_row) else None
+        for note_id in [source_note_id, target_note_id]:
+            if not note_id or note_id in related_note_ids:
+                continue
+            note_row = db.fetchone(
+                "SELECT note_id, title, vault_path FROM notes WHERE note_id = ?",
+                (note_id,),
+            )
+            if note_row is None:
+                continue
+            content_hash = vault.update_note_status(note_row["vault_path"], "approved")
+            db.execute(
+                """
+                UPDATE notes
+                SET status = 'approved', content_hash = ?, updated_at = ?
+                WHERE note_id = ?
+                """,
+                (content_hash, now_utc_iso(), note_id),
+            )
+            related_note_ids.append(note_id)
     db.execute(
         """
         UPDATE review_actions
@@ -431,7 +523,7 @@ def _finalize_approved_review(
         WHERE review_id = ?
         """,
         (
-            APPROVAL_FINAL_ACTIONS[action_type],
+            resolved_as or APPROVAL_FINAL_ACTIONS[action_type],
             committed_note_id or None,
             reviewer,
             now_utc_iso(),
@@ -439,7 +531,20 @@ def _finalize_approved_review(
         ),
     )
     actions = []
-    if committed_note_id:
+    if action_type == "link_notes":
+        snapshot = _snapshot_payload(review_row) or {}
+        for note_id in [snapshot.get("source_note_id"), snapshot.get("target_note_id")]:
+            if not note_id:
+                continue
+            linked_note = db.fetchone("SELECT title FROM notes WHERE note_id = ?", (note_id,))
+            actions.append(
+                {
+                    "note_id": note_id,
+                    "action_type": action_type,
+                    "note_title": linked_note["title"] if linked_note else None,
+                }
+            )
+    elif committed_note_id:
         actions.append(
             {
                 "note_id": committed_note_id,
@@ -460,6 +565,7 @@ def _finalize_approved_review(
         {
             "review_id": review_row["review_id"],
             "action_type": action_type,
+            "resolved_as": resolved_as or APPROVAL_FINAL_ACTIONS[action_type],
             "committed_note_id": committed_note_id,
         },
         trace_id=review_row["trace_id"],

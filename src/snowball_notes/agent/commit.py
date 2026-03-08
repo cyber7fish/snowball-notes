@@ -27,6 +27,29 @@ class Committer:
                 errors.append("create_note blocked by source_confidence")
         touched_notes = set()
         for proposal in proposals:
+            if proposal.action_type == "link_notes":
+                source_note_id = proposal.payload.get("source_note_id")
+                target_note_id = proposal.payload.get("target_note_id")
+                if not isinstance(source_note_id, str) or not source_note_id:
+                    errors.append("link_notes missing source_note_id")
+                    continue
+                if not isinstance(target_note_id, str) or not target_note_id:
+                    errors.append("link_notes missing target_note_id")
+                    continue
+                if source_note_id == target_note_id:
+                    errors.append("link_notes requires two distinct notes")
+                    continue
+                for note_id in (source_note_id, target_note_id):
+                    if note_id in touched_notes:
+                        errors.append(f"duplicate proposal target {note_id}")
+                    touched_notes.add(note_id)
+                    note_row = self.db.fetchone(
+                        "SELECT vault_path FROM notes WHERE note_id = ?",
+                        (note_id,),
+                    )
+                    if note_row is None:
+                        errors.append(f"link target missing: {note_id}")
+                continue
             if proposal.target_note_id:
                 if proposal.target_note_id in touched_notes:
                     errors.append(f"duplicate proposal target {proposal.target_note_id}")
@@ -122,6 +145,54 @@ class Committer:
                 (proposal.target_note_id, self.state.event.event_id),
             )
             return proposal.target_note_id
+        if proposal.action_type == "link_notes":
+            source_note_id = payload["source_note_id"]
+            target_note_id = payload["target_note_id"]
+            source_row = self.db.fetchone(
+                "SELECT vault_path, title FROM notes WHERE note_id = ?",
+                (source_note_id,),
+            )
+            target_row = self.db.fetchone(
+                "SELECT vault_path, title FROM notes WHERE note_id = ?",
+                (target_note_id,),
+            )
+            if source_row is None:
+                raise RuntimeError(f"missing note {source_note_id}")
+            if target_row is None:
+                raise RuntimeError(f"missing note {target_note_id}")
+            source_hash, target_hash = self.vault.add_bidirectional_link(
+                source_row["vault_path"],
+                source_row["title"],
+                target_row["vault_path"],
+                target_row["title"],
+            )
+            timestamp = now_utc_iso()
+            self.db.execute(
+                """
+                UPDATE notes
+                SET content_hash = ?, updated_at = ?, status = 'pending_review'
+                WHERE note_id = ?
+                """,
+                (source_hash, timestamp, source_note_id),
+            )
+            self.db.execute(
+                """
+                UPDATE notes
+                SET content_hash = ?, updated_at = ?, status = 'pending_review'
+                WHERE note_id = ?
+                """,
+                (target_hash, timestamp, target_note_id),
+            )
+            self.db.execute(
+                "INSERT OR IGNORE INTO note_sources (note_id, event_id, relation_type) VALUES (?, ?, 'linked_from')",
+                (source_note_id, self.state.event.event_id),
+            )
+            self.db.execute(
+                "INSERT OR IGNORE INTO note_sources (note_id, event_id, relation_type) VALUES (?, ?, 'linked_from')",
+                (target_note_id, self.state.event.event_id),
+            )
+            proposal.target_note_id = source_note_id
+            return source_note_id
         if proposal.action_type == "archive_turn":
             note_id = new_id("archive")
             path, content_hash = self.vault.write_archive_note(note_id, payload)

@@ -377,14 +377,24 @@ class SnowballAgent:
     def _flush_session_memory(self, state, final_decision: str) -> None:
         actions = []
         for proposal in state.proposals:
-            if proposal.target_note_id:
+            note_ids = []
+            if proposal.action_type == "link_notes":
+                source_note_id = proposal.payload.get("source_note_id")
+                target_note_id = proposal.payload.get("target_note_id")
+                if isinstance(source_note_id, str) and source_note_id:
+                    note_ids.append(source_note_id)
+                if isinstance(target_note_id, str) and target_note_id:
+                    note_ids.append(target_note_id)
+            elif proposal.target_note_id:
+                note_ids.append(proposal.target_note_id)
+            for note_id in note_ids:
                 note_row = self.db.fetchone(
                     "SELECT title FROM notes WHERE note_id = ?",
-                    (proposal.target_note_id,),
+                    (note_id,),
                 )
                 actions.append(
                     {
-                        "note_id": proposal.target_note_id,
+                        "note_id": note_id,
                         "action_type": proposal.action_type,
                         "note_title": note_row["title"] if note_row else None,
                     }
@@ -404,6 +414,8 @@ class SnowballAgent:
             return "create_note"
         if any(proposal.action_type == "append_note" for proposal in state.proposals):
             return "append_note"
+        if any(proposal.action_type == "link_notes" for proposal in state.proposals):
+            return "link_notes"
         if any(proposal.action_type == "archive_turn" for proposal in state.proposals):
             return "archive_turn"
         return "completed"

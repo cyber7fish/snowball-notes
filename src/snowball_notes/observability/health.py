@@ -7,7 +7,14 @@ from datetime import timedelta
 from ..utils import now_utc, parse_datetime
 
 
-APPROVED_REVIEW_ACTIONS = {"approved", "approve_create", "approve_append", "approve_archive"}
+APPROVED_REVIEW_ACTIONS = {
+    "approved",
+    "approve_create",
+    "approve_append",
+    "approve_archive",
+    "approve_link",
+    "create_separate",
+}
 
 
 def collect_parser_health(db, sample_size: int = 50) -> dict[str, float | int | None]:

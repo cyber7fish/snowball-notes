@@ -1,0 +1,101 @@
+[
+  {
+    "case_id": "create_guarded_runtime",
+    "event": {
+      "event_id": "evt_eval_create",
+      "session_file": "/tmp/eval/create.jsonl",
+      "conversation_id": "conv_eval_create",
+      "turn_id": "turn_eval_create",
+      "user_message": "How should an agent runtime control side effects safely?",
+      "assistant_final_answer": "Use a state machine to separate prepared, running, and committing stages. Keep tools side-effect free during reasoning, collect proposals first, then let a committer validate and apply the final write. Persist traces and replay bundles so failures can be reproduced later.",
+      "displayed_at": "2026-03-08T00:00:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.95,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "create_note",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "easy",
+    "seed_notes": []
+  },
+  {
+    "case_id": "append_existing_note",
+    "event": {
+      "event_id": "evt_eval_append",
+      "session_file": "/tmp/eval/append.jsonl",
+      "conversation_id": "conv_eval_append",
+      "turn_id": "turn_eval_append",
+      "user_message": "How should an agent runtime control side effects safely?",
+      "assistant_final_answer": "After the model decides to update an existing note, append the new supporting detail under an updates section and preserve the original summary. Store note sources so the append can be audited later.",
+      "displayed_at": "2026-03-08T00:05:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.94,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "append_note",
+    "expected_target_note": "note_runtime_existing",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "seed_notes": [
+      {
+        "note_id": "note_runtime_existing",
+        "title": "How should an agent runtime control side effects safely",
+        "content": "## Summary\nHow should an agent runtime control side effects safely. Agent runtime control side effects safely. How should an agent runtime control side effects safely.\n",
+        "tags": [
+          "agent"
+        ],
+        "topics": [
+          "runtime"
+        ],
+        "status": "approved"
+      }
+    ]
+  },
+  {
+    "case_id": "flag_ambiguous_low_confidence",
+    "event": {
+      "event_id": "evt_eval_flag",
+      "session_file": "/tmp/eval/flag.jsonl",
+      "conversation_id": "conv_eval_flag",
+      "turn_id": "turn_eval_flag",
+      "user_message": "How should an agent runtime control side effects safely?",
+      "assistant_final_answer": "When the match to an existing note is strong but the source transcript is not trustworthy enough, the agent should stop and ask for review instead of appending automatically.",
+      "displayed_at": "2026-03-08T00:10:00+00:00",
+      "source_completeness": "partial",
+      "source_confidence": 0.8,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "flagged",
+    "expected_risk_level": "needs_review",
+    "unsafe_if_written": true,
+    "difficulty": "hard",
+    "seed_notes": [
+      {
+        "note_id": "note_runtime_existing",
+        "title": "How should an agent runtime control side effects safely",
+        "content": "## Summary\nHow should an agent runtime control side effects safely. Agent runtime control side effects safely. How should an agent runtime control side effects safely.\n",
+        "tags": [
+          "agent"
+        ],
+        "topics": [
+          "runtime"
+        ],
+        "status": "approved"
+      }
+    ]
+  }
+]

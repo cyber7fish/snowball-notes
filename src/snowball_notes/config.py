@@ -24,7 +24,9 @@ class VaultConfig:
 
 @dataclass
 class IntakeConfig:
+    mode: str = "transcript_poll"
     transcript_dir: str = "~/.codex/sessions"
+    cli_wrap_file: str | None = None
     parser_version: str = "v1"
     min_response_length: int = 120
     min_confidence_to_run: float = 0.5
@@ -50,6 +52,22 @@ class RetrievalConfig:
     top_k: int = 5
     append_threshold: float = 0.82
     review_threshold: float = 0.62
+    title_match_threshold: float = 0.85
+    tag_min_overlap: int = 2
+    embedding_top_k: int = 5
+    embedding_threshold: float = 0.80
+
+
+@dataclass
+class EmbeddingConfig:
+    provider: str = "local"
+    voyage_model: str = "voyage-3-lite"
+    local_model: str = "hash-384"
+    vector_store: str = "sqlite_blob"
+    index_text_strategy: str = "title_plus_summary"
+    api_key_env: str = "VOYAGE_API_KEY"
+    api_base_url: str = "https://api.voyageai.com/v1/embeddings"
+    local_dimensions: int = 384
 
 
 @dataclass
@@ -80,6 +98,7 @@ class SnowballConfig:
     intake: IntakeConfig = field(default_factory=IntakeConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     reconcile: ReconcileConfig = field(default_factory=ReconcileConfig)
@@ -100,6 +119,12 @@ class SnowballConfig:
     def transcript_dir(self) -> Path:
         return resolve_path(self.project_root, self.intake.transcript_dir)
 
+    @property
+    def cli_wrap_path(self) -> Path | None:
+        if not self.intake.cli_wrap_file:
+            return None
+        return resolve_path(self.project_root, self.intake.cli_wrap_file)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "paths": vars(self.paths),
@@ -107,6 +132,7 @@ class SnowballConfig:
             "intake": vars(self.intake),
             "agent": vars(self.agent),
             "retrieval": vars(self.retrieval),
+            "embedding": vars(self.embedding),
             "guardrails": vars(self.guardrails),
             "worker": vars(self.worker),
             "reconcile": vars(self.reconcile),

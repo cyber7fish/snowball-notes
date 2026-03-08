@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS note_embeddings (
   note_id TEXT PRIMARY KEY,
   embedding_model TEXT NOT NULL,
   embedding_vector BLOB,
+  content_hash TEXT,
   updated_at TEXT NOT NULL
 );
 
@@ -163,6 +164,41 @@ CREATE TABLE IF NOT EXISTS review_actions (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS eval_cases (
+  case_id TEXT PRIMARY KEY,
+  turn_id TEXT,
+  input_json TEXT NOT NULL,
+  expected_decision TEXT NOT NULL,
+  expected_target_note TEXT,
+  expected_risk_level TEXT NOT NULL,
+  unsafe_if_written INTEGER NOT NULL DEFAULT 0,
+  difficulty TEXT NOT NULL,
+  annotator TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+  run_id TEXT PRIMARY KEY,
+  prompt_version TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  total_cases INTEGER NOT NULL,
+  decision_accuracy REAL NOT NULL,
+  target_note_accuracy REAL,
+  false_write_rate REAL NOT NULL,
+  unsafe_merge_rate REAL,
+  proposal_rejection_rate REAL,
+  logical_replay_match_rate REAL,
+  live_replay_drift_rate REAL,
+  review_precision REAL,
+  auto_action_acceptance_rate REAL,
+  avg_steps REAL,
+  avg_tokens REAL,
+  avg_duration_ms REAL,
+  result_json TEXT NOT NULL,
+  ran_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS confidence_feedback (
   feedback_id TEXT PRIMARY KEY,
   turn_id TEXT NOT NULL,
@@ -197,6 +233,7 @@ class Database:
 
     def migrate(self) -> None:
         self._connection.executescript(SCHEMA_SQL)
+        self._ensure_column("note_embeddings", "content_hash", "TEXT")
         self._ensure_column("review_actions", "suggested_action", "TEXT")
         self._ensure_column("review_actions", "suggested_target_note_id", "TEXT")
         self._ensure_column("review_actions", "suggested_payload_json", "TEXT")

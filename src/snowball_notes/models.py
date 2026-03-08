@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -300,6 +301,156 @@ class ReplayBundle:
     model_name: str
     model_adapter_version: str
     created_at: str = field(default_factory=now_utc_iso)
+
+
+@dataclass
+class SeedNote:
+    note_id: str
+    title: str
+    content: str
+    tags: list[str] = field(default_factory=list)
+    topics: list[str] = field(default_factory=list)
+    note_type: str = "atomic"
+    status: str = "approved"
+    source_event_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SeedNote":
+        return cls(
+            note_id=payload["note_id"],
+            title=payload["title"],
+            content=payload["content"],
+            tags=list(payload.get("tags", [])),
+            topics=list(payload.get("topics", [])),
+            note_type=payload.get("note_type", "atomic"),
+            status=payload.get("status", "approved"),
+            source_event_ids=list(payload.get("source_event_ids", [])),
+        )
+
+
+@dataclass
+class EvalCase:
+    case_id: str
+    event: StandardEvent
+    expected_decision: str
+    expected_target_note: str | None
+    expected_risk_level: str
+    unsafe_if_written: bool
+    difficulty: str
+    annotator: str = ""
+    notes: str = ""
+    seed_notes: list[SeedNote] = field(default_factory=list)
+
+    def to_input_payload(self) -> dict[str, Any]:
+        return {
+            "event": self.event.to_dict(),
+            "seed_notes": [note.to_dict() for note in self.seed_notes],
+        }
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "case_id": self.case_id,
+            "turn_id": self.event.turn_id,
+            "input_json": self.to_input_payload(),
+            "expected_decision": self.expected_decision,
+            "expected_target_note": self.expected_target_note,
+            "expected_risk_level": self.expected_risk_level,
+            "unsafe_if_written": int(self.unsafe_if_written),
+            "difficulty": self.difficulty,
+            "annotator": self.annotator,
+            "notes": self.notes,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "EvalCase":
+        event_payload = payload.get("event") or payload.get("turn") or {}
+        seed_note_payloads = payload.get("seed_notes") or []
+        return cls(
+            case_id=payload["case_id"],
+            event=StandardEvent.from_dict(event_payload),
+            expected_decision=str(payload["expected_decision"]),
+            expected_target_note=payload.get("expected_target_note"),
+            expected_risk_level=str(payload["expected_risk_level"]),
+            unsafe_if_written=bool(payload.get("unsafe_if_written", False)),
+            difficulty=str(payload.get("difficulty", "medium")),
+            annotator=str(payload.get("annotator", "")),
+            notes=str(payload.get("notes", "")),
+            seed_notes=[SeedNote.from_dict(item) for item in seed_note_payloads],
+        )
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "EvalCase":
+        raw_input = row.get("input_json")
+        if isinstance(raw_input, str):
+            payload = json.loads(raw_input)
+        else:
+            payload = dict(raw_input or {})
+        payload.update(
+            {
+                "case_id": row["case_id"],
+                "expected_decision": row["expected_decision"],
+                "expected_target_note": row.get("expected_target_note"),
+                "expected_risk_level": row["expected_risk_level"],
+                "unsafe_if_written": bool(row.get("unsafe_if_written")),
+                "difficulty": row["difficulty"],
+                "annotator": row.get("annotator") or "",
+                "notes": row.get("notes") or "",
+            }
+        )
+        return cls.from_dict(payload)
+
+
+@dataclass
+class EvalCaseResult:
+    case_id: str
+    trace_id: str
+    actual_decision: str
+    actual_target_note: str | None
+    decision_correct: bool
+    target_note_correct: bool | None
+    has_write: bool
+    unsafe_write: bool
+    unsafe_merge: bool
+    unsafe_merge_eligible: bool
+    proposal_rejected: bool
+    proposals_present: bool
+    logical_replay_matched: bool | None
+    live_replay_drifted: bool | None
+    steps: int
+    total_tokens: int
+    duration_ms: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EvalReport:
+    run_id: str
+    prompt_version: str
+    model_name: str
+    total_cases: int
+    decision_accuracy: float
+    target_note_accuracy: float | None
+    false_write_rate: float
+    unsafe_merge_rate: float | None
+    proposal_rejection_rate: float | None
+    logical_replay_match_rate: float | None
+    live_replay_drift_rate: float | None
+    avg_steps: float | None
+    avg_tokens: float | None
+    avg_duration_ms: float | None
+    results: list[EvalCaseResult] = field(default_factory=list)
+    review_precision: float | None = None
+    auto_action_acceptance_rate: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["results"] = [result.to_dict() for result in self.results]
+        return payload
 
 
 @dataclass

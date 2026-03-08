@@ -81,6 +81,17 @@ class Vault:
         write_atomic_text(note_path, updated)
         return sha256_text(updated)
 
+    def add_bidirectional_link(
+        self,
+        source_path: str | Path,
+        source_title: str,
+        target_path: str | Path,
+        target_title: str,
+    ) -> tuple[str, str]:
+        source_hash = self._ensure_links_section_entry(Path(source_path), target_title)
+        target_hash = self._ensure_links_section_entry(Path(target_path), source_title)
+        return source_hash, target_hash
+
     def read_note(self, note_path: str | Path) -> str:
         return safe_read_text(Path(note_path))
 
@@ -120,6 +131,19 @@ class Vault:
             rendered += "\n"
         write_atomic_text(path, rendered)
         return sha256_text(rendered)
+
+    def _ensure_links_section_entry(self, note_path: Path, linked_title: str) -> str:
+        existing = safe_read_text(note_path)
+        link_line = f"- [[{linked_title}]]"
+        if link_line in existing:
+            return sha256_text(existing)
+        marker = "\n## Links\n"
+        if marker in existing:
+            updated = existing.rstrip() + "\n" + link_line + "\n"
+        else:
+            updated = existing.rstrip() + f"{marker}\n{link_line}\n"
+        write_atomic_text(note_path, updated)
+        return sha256_text(updated)
 
     def _frontmatter(self, payload: dict[str, Any]) -> str:
         lines = ["---"]

@@ -18,14 +18,21 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
+[project.optional-dependencies]
+review = [
+  "fastapi>=0.110",
+  "httpx>=0.27",
+  "uvicorn>=0.29",
+]
+
 [project.scripts]
 snowball-worker = "snowball_notes.cli:main"
 snowball-review = "snowball_notes.cli:main"
 snowball-status = "snowball_notes.cli:main"
+snowball-eval = "snowball_notes.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

@@ -25,6 +25,10 @@ TOOL_SCHEMAS = {
         "required": ["title", "content"],
         "types": {"title": str, "content": str},
     },
+    "propose_link_notes": {
+        "required": ["source_note_id", "target_note_id"],
+        "types": {"source_note_id": str, "target_note_id": str},
+    },
     "flag_for_review": {
         "required": ["reason"],
         "types": {"reason": str, "conflict_note_id": str, "suggested_action": str, "suggested_payload": dict},
@@ -238,6 +242,28 @@ class ProposeArchiveTurnTool(Tool):
         return ToolResult.ok({"proposal_id": proposal.proposal_id, "action_type": proposal.action_type})
 
 
+class ProposeLinkNotesTool(Tool):
+    name = "propose_link_notes"
+
+    def execute(self, payload: dict[str, Any], state) -> ToolResult:
+        proposal = ActionProposal(
+            proposal_id=new_id("proposal"),
+            trace_id=state.trace_id,
+            turn_id=state.event.turn_id,
+            action_type="link_notes",
+            target_note_id=payload["source_note_id"],
+            payload={
+                "source_note_id": payload["source_note_id"],
+                "target_note_id": payload["target_note_id"],
+                "source_event_id": state.event.event_id,
+            },
+            idempotency_key=f"link:{payload['source_note_id']}:{payload['target_note_id']}",
+        )
+        state.proposals.append(proposal)
+        state.write_count += 1
+        return ToolResult.ok({"proposal_id": proposal.proposal_id, "action_type": proposal.action_type})
+
+
 class FlagForReviewTool(Tool):
     name = "flag_for_review"
 
@@ -290,6 +316,7 @@ def build_tool_registry(db, knowledge_index) -> dict[str, Tool]:
         "propose_create_note": ProposeCreateNoteTool(),
         "propose_append_to_note": ProposeAppendToNoteTool(),
         "propose_archive_turn": ProposeArchiveTurnTool(),
+        "propose_link_notes": ProposeLinkNotesTool(),
         "flag_for_review": FlagForReviewTool(db),
     }
 

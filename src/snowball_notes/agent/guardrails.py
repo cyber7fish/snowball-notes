@@ -8,6 +8,7 @@ ACTION_TOOLS = {
     "propose_create_note",
     "propose_append_to_note",
     "propose_archive_turn",
+    "propose_link_notes",
 }
 NOTE_CREATION_TOOLS = {"propose_create_note"}
 
@@ -32,4 +33,3 @@ def check_guardrail(config: SnowballConfig, state, tool_name: str) -> GuardrailR
                 f"append confidence too low ({event.source_confidence})"
             )
     return GuardrailResult.allow()
-
