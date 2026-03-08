@@ -1,0 +1,55 @@
+paths:
+  db: "./workspace/data/snowball.db"
+  log: "./workspace/logs/snowball.jsonl"
+
+vault:
+  path: "./workspace/vault"
+  inbox_dir: "Inbox"
+  archive_dir: "Archive/Conversations"
+  atomic_dir: "Knowledge/Atomic"
+
+intake:
+  mode: "transcript_poll"
+  transcript_dir: "./transcripts"
+  cli_wrap_file: null
+  parser_version: "v1"
+  min_response_length: 120
+  min_confidence_to_run: 0.50
+
+agent:
+  provider: "heuristic"
+  model: "heuristic-v1"
+  max_steps: 8
+  prompt_version: "agent_system/v1.md"
+  max_writes_per_run: 1
+  max_appends_per_run: 1
+
+embedding:
+  provider: "local"
+  local_model: "hash-384"
+  vector_store: "sqlite_blob"
+  index_text_strategy: "title_plus_summary"
+  local_dimensions: 384
+
+retrieval:
+  top_k: 5
+  append_threshold: 0.82
+  review_threshold: 0.62
+  title_match_threshold: 0.85
+  tag_min_overlap: 2
+  embedding_top_k: 5
+  embedding_threshold: 0.80
+
+guardrails:
+  min_confidence_for_note: 0.70
+  min_confidence_for_append: 0.85
+
+worker:
+  poll_interval_seconds: 10
+  claim_timeout_seconds: 300
+  max_retries: 3
+
+reconcile:
+  enabled: false
+  run_on_startup: false
+  schedule_cron: "0 3 * * *"

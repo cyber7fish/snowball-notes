@@ -1,0 +1,5 @@
+{"timestamp":"2026-03-08T10:25:00.000Z","type":"session_meta","payload":{"id":"conv_llm_kv_cache_impl","cwd":"/tmp/llm-observe","originator":"codex_cli_rs","cli_version":"0.112.0","model_provider":"heuristic"}}
+{"timestamp":"2026-03-08T10:25:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn_llm_kv_cache_impl_1"}}
+{"timestamp":"2026-03-08T10:25:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"从系统实现角度看，KV cache 为什么能显著降低大模型 decode 阶段延迟？"}}
+{"timestamp":"2026-03-08T10:25:03.000Z","type":"event_msg","phase":"final_answer","payload":{"type":"agent_message","message":"从系统实现角度看，KV cache 的收益来自把历史 token 的注意力状态复用起来，而不是在每一步生成时把整个前缀重新过一遍模型。实现上通常先在 prefill 阶段把已有上下文的 key/value 写入缓存，decode 阶段再只为最新 token 计算一次 query、key、value，并复用之前缓存的张量完成注意力计算。这样单步生成的计算复杂度和延迟都会下降，尤其在长输出场景更明显。工程实现时还要同时处理显存占用、分页缓存、batch 调度和超长上下文淘汰策略，所以它既是性能优化，也是推理系统设计的一部分。"}}
+{"timestamp":"2026-03-08T10:25:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_llm_kv_cache_impl_1"}}

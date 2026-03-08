@@ -281,3 +281,47 @@ class EmbeddingTests(unittest.TestCase):
                 self.assertTrue(result["roundtrip_ok"])
             finally:
                 db.close()
+
+    def test_dashscope_provider_chunks_batches_larger_than_ten(self):
+        class _FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = default_config(root)
+            config.embedding.provider = "dashscope"
+            config.embedding.dashscope_api_key_env = "DASHSCOPE_API_KEY"
+            config.embedding.dashscope_dimensions = 1
+            request_batches = []
+
+            def _fake_urlopen(req, timeout):
+                payload = json.loads(req.data.decode("utf-8"))
+                batch = payload["input"]
+                request_batches.append(batch)
+                return _FakeResponse(
+                    {
+                        "data": [
+                            {"embedding": [float(text.split("-")[-1])]}
+                            for text in batch
+                        ]
+                    }
+                )
+
+            with mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"}):
+                with mock.patch("snowball_notes.embedding.dashscope.request.urlopen", side_effect=_fake_urlopen):
+                    provider = build_embedding_provider(config)
+                    texts = [f"text-{index}" for index in range(23)]
+                    vectors = provider.embed_batch(texts)
+            self.assertEqual([len(batch) for batch in request_batches], [10, 10, 3])
+            self.assertEqual([text for batch in request_batches for text in batch], texts)
+            self.assertEqual([vector[0] for vector in vectors], [float(index) for index in range(23)])

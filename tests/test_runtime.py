@@ -353,6 +353,48 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_worker_creates_note_for_guardrails_concept_explanation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts)
+            _write_transcript(
+                transcripts / "session.jsonl",
+                "什么是 Guardrails？",
+                (
+                    "Guardrails 是运行时的确定性安全检查，用来限制 Agent 的行为边界。"
+                    "例如项目进度 / Phase 归属这类 meta turn 不能变成知识 note；"
+                    "如果用户只是问“当前做到哪了”，系统会直接 block。"
+                    "这类规则的目标是防止会话型上下文污染长期知识库，同时保留稳定的架构解释。"
+                ),
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "completed")
+                trace = db.fetchone(
+                    """
+                    SELECT final_decision
+                    FROM agent_traces
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(trace["final_decision"], "create_note")
+                note_rows = db.fetchall("SELECT note_id, vault_path FROM notes WHERE note_type = 'atomic'")
+                self.assertEqual(len(note_rows), 1)
+                self.assertTrue(Path(note_rows[0]["vault_path"]).exists())
+                self.assertIn("Knowledge/Atomic", note_rows[0]["vault_path"])
+                archive_count = db.fetchone(
+                    "SELECT COUNT(*) AS count FROM notes WHERE note_type = 'archive' AND status != 'deleted'"
+                )
+                self.assertEqual(archive_count["count"], 0)
+            finally:
+                db.close()
+
     def test_worker_appends_to_existing_note(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

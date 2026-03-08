@@ -8,6 +8,8 @@ from ..config import SnowballConfig
 
 
 class DashScopeEmbeddingProvider:
+    _MAX_BATCH_SIZE = 10
+
     def __init__(self, config: SnowballConfig):
         self.config = config
         self.model_name = config.embedding.dashscope_model
@@ -27,6 +29,13 @@ class DashScopeEmbeddingProvider:
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self._MAX_BATCH_SIZE):
+            batch = texts[start : start + self._MAX_BATCH_SIZE]
+            vectors.extend(self._embed_request(batch))
+        return vectors
+
+    def _embed_request(self, texts: list[str]) -> list[list[float]]:
         body = {
             "model": self.model_name,
             "input": texts,

@@ -1,0 +1,5 @@
+{"timestamp":"2026-03-08T10:15:00.000Z","type":"session_meta","payload":{"id":"conv_llm_post_training","cwd":"/tmp/llm-observe","originator":"codex_cli_rs","cli_version":"0.112.0","model_provider":"heuristic"}}
+{"timestamp":"2026-03-08T10:15:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn_llm_post_training_1"}}
+{"timestamp":"2026-03-08T10:15:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"为什么 instruction tuning 不能替代 RLHF 或 preference optimization？"}}
+{"timestamp":"2026-03-08T10:15:03.000Z","type":"event_msg","phase":"final_answer","payload":{"type":"agent_message","message":"instruction tuning 主要解决的是“看懂任务格式并按要求输出”的问题，本质上是在监督数据上模仿期望答案分布。它能提升可用性，但未必能稳定优化帮助性、无害性、拒答边界或多轮偏好。RLHF 或其他 preference optimization 方法处理的是相对偏好信号，也就是两个候选答案哪个更符合人类偏好。这个信号和单条标准答案并不等价，所以它更适合调整语气、风险边界、遵循程度和整体交互质量。工程上常见做法是先做 instruction tuning，再用 preference optimization 对行为风格做二次校准。"}}
+{"timestamp":"2026-03-08T10:15:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_llm_post_training_1"}}

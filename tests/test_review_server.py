@@ -84,7 +84,26 @@ class ReviewServerTests(unittest.TestCase):
                     source_completeness="full",
                     source_confidence=0.88,
                     parser_version="v1",
-                    context_meta={"cwd": "/tmp/project", "client": "codex"},
+                    context_meta={
+                        "cwd": "/tmp/project",
+                        "client": "codex",
+                        "source_confidence_breakdown": {
+                            "score": 0.88,
+                            "base_score": 1.0,
+                            "penalties": [
+                                {
+                                    "code": "short_final_answer",
+                                    "delta": -0.12,
+                                    "detail": "mock breakdown for review rendering",
+                                    "score_after": 0.88,
+                                }
+                            ],
+                            "signals": {
+                                "source_completeness": "full",
+                                "parser_version": "v1",
+                            },
+                        },
+                    },
                 )
                 db.execute(
                     """
@@ -334,6 +353,8 @@ class ReviewServerTests(unittest.TestCase):
                 self.assertEqual(payload["review_id"], "review_1")
                 self.assertEqual(payload["trace"]["final_decision"], "flagged")
                 self.assertEqual(payload["event"]["turn_id"], "turn_review_1")
+                self.assertEqual(payload["confidence_breakdown"]["score"], 0.88)
+                self.assertEqual(payload["confidence_breakdown"]["penalties"][0]["code"], "short_final_answer")
 
                 feedback = client.post(
                     "/api/reviews/review_1/confidence-feedback",

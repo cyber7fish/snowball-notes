@@ -53,6 +53,8 @@ class TranscriptParserTests(unittest.TestCase):
             self.assertEqual(event.user_message, "How do I build a queue?")
             self.assertIn("claim-based queue", event.assistant_final_answer)
             self.assertGreaterEqual(event.source_confidence, 0.8)
+            self.assertEqual(event.context_meta["source_confidence_breakdown"]["score"], event.source_confidence)
+            self.assertEqual(event.context_meta["source_confidence_breakdown"]["penalties"], [])
 
     def test_parse_payload_phase_final_answer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -93,6 +95,7 @@ class TranscriptParserTests(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertIn("payload and record phases", events[0].assistant_final_answer)
             self.assertGreaterEqual(events[0].source_confidence, 0.8)
+            self.assertIn("source_confidence_breakdown", events[0].context_meta)
 
     def test_task_complete_falls_back_to_last_agent_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -131,6 +134,10 @@ class TranscriptParserTests(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertIn("task_complete fallback", events[0].assistant_final_answer)
             self.assertGreaterEqual(events[0].source_confidence, 0.8)
+            self.assertEqual(
+                events[0].context_meta["source_confidence_breakdown"]["signals"]["task_complete_count"],
+                1,
+            )
 
 
 if __name__ == "__main__":

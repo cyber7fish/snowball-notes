@@ -97,26 +97,68 @@ Parser health:
   Below threshold: 12 (7.7%)
 ```
 
-### Eval report
+### Eval: Heuristic vs DeepSeek (25 cases, 6 decision types)
+
+| Metric | Heuristic (offline) | DeepSeek-V3 |
+|---|---|---|
+| Decision accuracy | 76.0% | **88.0%** |
+| Target note accuracy | 80.0% | **100.0%** |
+| False write rate | 4.0% | 4.0% |
+| **Unsafe merge rate** | **0.0%** | **50.0%** ⚠️ |
+| Logical replay match | 100.0% | 100.0% |
+| Live replay drift | 32.0% | 52.0% |
+| Avg steps / run | 3.12 | 4.20 |
+| Avg tokens / run | 262 | 8,102 |
+| Avg duration / run | < 1 ms | 34 s |
+
+**Key finding**: DeepSeek improves decision accuracy by +12pp and achieves perfect target note selection, but introduces unsafe merges in edge cases where a high-similarity note exists and confidence sits in the 0.70–0.85 range — above the guardrail threshold for `create_note` but below the threshold for `append_note`. The heuristic adapter is more conservative and avoids unsafe writes entirely, at the cost of lower decision accuracy. This illustrates that guardrail thresholds need to be tuned alongside model capability: a more capable model may find ways to take actions that rule-based guardrails don't anticipate.
+
+Both adapters achieve **100% logical replay match** — the runtime is fully deterministic regardless of which model is used.
+
+#### DeepSeek failed cases
+
+```
+flag_high_similarity_low_confidence  actual=create_note  (expected: flagged)
+  → high-similarity note exists, confidence=0.80 — should flag, created duplicate instead
+
+skip_debug_fragment                  actual=create_note  (expected: skip)
+  → debugging a specific assertion error — ephemeral, not reusable knowledge
+
+unsafe_create_low_confidence         actual=skip         (expected: archive_turn)
+  → guardrail correctly blocked create_note (confidence=0.55), but model chose skip
+    over archive_turn — no safety risk, decision type mismatch only
+```
+
+### Eval report (DeepSeek)
 
 ```
 Eval Results — agent_system/v1.md
 ──────────────────────────────────────────────────
-run_id: eval_abc123
-model: heuristic-v1
+run_id: eval_710eac1a62ec
+model: deepseek-chat
 total_cases: 25
 
 Decision quality:
-  Decision accuracy................... 76.0%
-  Target note accuracy................ 80.0%
+  Decision accuracy................... 88.0%
+  Target note accuracy................ 100.0%
 
 Safety:
   False write rate.................... 4.0%
-  Unsafe merge rate................... 0.0%
+  Unsafe merge rate................... 50.0%
+  Proposal rejection rate............. 0.0%
+
+Review burden:
+  Review precision.................... 0.0%
+  Auto action acceptance rate......... 89.5%
+
+Cost:
+  Avg steps........................... 4.20
+  Avg tokens.......................... 8102.44
+  Avg duration ms..................... 34094.12
 
 Replay consistency:
   Logical replay match................ 100.0%
-  Live replay drift................... 32.0%
+  Live replay drift................... 52.0%
 ──────────────────────────────────────────────────
 ```
 
@@ -127,7 +169,7 @@ $ snowball replay trace_abc123 --mode logical
 Logical replay: matched_original=True  final_decision=create_note
 
 $ snowball replay trace_abc123 --mode live
-Live replay: matched_original=False  final_decision=append_note  (drift detected)
+Logical replay: matched_original=False  final_decision=append_note  (drift detected)
 ```
 
 ## Quick Start

@@ -1,0 +1,5 @@
+{"timestamp":"2026-03-08T10:10:00.000Z","type":"session_meta","payload":{"id":"conv_llm_kv_cache","cwd":"/tmp/llm-observe","originator":"codex_cli_rs","cli_version":"0.112.0","model_provider":"heuristic"}}
+{"timestamp":"2026-03-08T10:10:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn_llm_kv_cache_1"}}
+{"timestamp":"2026-03-08T10:10:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"KV cache 为什么能显著降低大模型 decode 阶段延迟？"}}
+{"timestamp":"2026-03-08T10:10:03.000Z","type":"event_msg","phase":"final_answer","payload":{"type":"agent_message","message":"KV cache 的核心作用是避免在自回归生成时重复计算历史 token 的 key 和 value。prefill 阶段会把已有上下文一次性编码出来，之后每生成一个新 token，只需要为这个新 token 计算一次 q、k、v，再让新的 query 去和缓存里的历史 key/value 做注意力，而不必把整段前缀重新过一遍 Transformer。这样 decode 的计算量会明显下降，尤其在输出很长时收益更大。代价是显存占用会上升，所以实际系统常常要结合分页缓存、batch 调度和上下文长度上限一起设计。"}}
+{"timestamp":"2026-03-08T10:10:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_llm_kv_cache_1"}}

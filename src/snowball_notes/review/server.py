@@ -261,6 +261,7 @@ def _review_detail(db, review_id: str) -> dict | None:
         detail["suggested_payload_json"] = json.loads(detail["suggested_payload_json"])
     if event_row:
         detail["event"] = json.loads(event_row["payload_json"])
+        detail["confidence_breakdown"] = detail["event"].get("context_meta", {}).get("source_confidence_breakdown")
     if trace_row:
         detail["trace"] = {
             "trace_id": trace_row["trace_id"],
@@ -783,6 +784,7 @@ def _render_index_html() -> str:
       const trace = detail.trace || {{}};
       const traceData = trace.trace || {{}};
       const replay = detail.replay_bundle || {{}};
+      const confidenceBreakdown = detail.confidence_breakdown || event.context_meta?.source_confidence_breakdown || null;
       const toolSteps = (traceData.steps || []).filter((step) => step.tool_name);
       const actionValue = normalizeActionValue(detail.suggested_action || "create_note");
       const actionOptions = ACTION_OPTIONS.map((option) => `
@@ -812,6 +814,9 @@ def _render_index_html() -> str:
           <pre>${{escapeHtml(step.tool_result_json || "")}}</pre>
         </div>
       `).join("") || "<p>No tool calls recorded.</p>";
+      const penaltyItems = (confidenceBreakdown?.penalties || []).map((item) => `
+        <li>${{escapeHtml(item.code)}}: ${{escapeHtml(item.delta)}} (${{escapeHtml(item.detail)}}) -> ${{escapeHtml(item.score_after)}}</li>
+      `).join("") || "<li>No penalties applied.</li>";
 
       root.innerHTML = `
         <section class="headline">
@@ -893,6 +898,25 @@ def _render_index_html() -> str:
           <article class="section">
             <h4>Proposals</h4>
             <ul>${{proposalItems}}</ul>
+          </article>
+        </section>
+
+        <section class="columns">
+          <article class="section">
+            <h4>Confidence Breakdown</h4>
+            ${{confidenceBreakdown ? `
+              <ul>
+                <li>base_score: ${{escapeHtml(confidenceBreakdown.base_score)}}</li>
+                <li>score: ${{escapeHtml(confidenceBreakdown.score)}}</li>
+                <li>source_completeness: ${{escapeHtml(confidenceBreakdown.signals?.source_completeness || "-")}}</li>
+                <li>parser_version: ${{escapeHtml(confidenceBreakdown.signals?.parser_version || "-")}}</li>
+              </ul>
+              <ul>${{penaltyItems}}</ul>
+            ` : "<p>No confidence breakdown recorded for this event.</p>"}}
+          </article>
+          <article class="section">
+            <h4>Confidence Signals</h4>
+            <pre>${{escapeHtml(pretty(confidenceBreakdown?.signals || {{}}))}}</pre>
           </article>
         </section>
 

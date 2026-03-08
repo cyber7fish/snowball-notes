@@ -111,6 +111,35 @@ class ReactLoopTests(unittest.TestCase):
         self.assertEqual(result.data["decision"], "skip")
         self.assertEqual(result.data["reason"], ["contains_secret_like_text"])
 
+    def test_assess_turn_keeps_concept_explanations_out_of_project_meta_archive(self):
+        event = StandardEvent(
+            event_id="evt_guardrails_concept",
+            session_file="/tmp/session.jsonl",
+            conversation_id="conv_guardrails_concept",
+            turn_id="turn_guardrails_concept",
+            user_message="什么是 Guardrails？",
+            assistant_final_answer=(
+                "Guardrails 是运行时的确定性安全检查，用来限制 Agent 的行为边界。"
+                "例如项目进度 / Phase 归属这类 meta turn 不能变成知识 note；"
+                "如果用户只是问“当前做到哪了”，系统会直接 block。"
+            ),
+            displayed_at="2026-03-08T00:00:00+00:00",
+            source_completeness="full",
+            source_confidence=0.95,
+            parser_version="v1",
+            context_meta={},
+        )
+        state = AgentState(
+            event=event,
+            task_id="task_guardrails_concept",
+            trace_id="trace_guardrails_concept",
+            session_memory=SessionMemory(conversation_id=event.conversation_id),
+        )
+        result = AssessTurnValueTool().execute({}, state)
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["decision"], "note")
+        self.assertEqual(result.data["reason"], ["long_term_value"])
+
 
 if __name__ == "__main__":
     unittest.main()

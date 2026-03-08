@@ -7,7 +7,7 @@ from typing import Any
 
 from ..models import StandardEvent
 from ..utils import sha256_text
-from .confidence import compute_source_confidence
+from .confidence import compute_source_confidence_breakdown
 
 
 @dataclass
@@ -75,13 +75,14 @@ def parse_session_file(path: Path, parser_version: str = "v1") -> list[StandardE
             if current.user_message and current.assistant_final_answer
             else "partial"
         )
-        source_confidence = compute_source_confidence(
+        confidence_breakdown = compute_source_confidence_breakdown(
             current.raw_events,
             current.assistant_final_answer,
             current.user_message,
             source_completeness,
             parser_version,
         )
+        source_confidence = float(confidence_breakdown["score"])
         turn_seed = f"{session_meta.get('id', '')}:{current.turn_id}:{displayed_at}"
         event_id = f"evt_{sha256_text(turn_seed)[:16]}"
         events.append(
@@ -101,6 +102,7 @@ def parse_session_file(path: Path, parser_version: str = "v1") -> list[StandardE
                     "cwd": session_meta.get("cwd", ""),
                     "cli_version": session_meta.get("cli_version", ""),
                     "model_provider": session_meta.get("model_provider", ""),
+                    "source_confidence_breakdown": confidence_breakdown,
                 },
             )
         )

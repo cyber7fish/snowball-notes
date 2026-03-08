@@ -460,7 +460,10 @@ def _contains_secret_like_text(value: str) -> bool:
 
 
 def is_project_meta_turn(user_message: str, answer: str = "") -> bool:
-    combined = normalize_text(f"{user_message}\n{answer}").replace(" ", "")
+    # Follow the user's intent here. Answers often mention project-meta examples
+    # while explaining a reusable concept, and those examples should not force
+    # the whole turn down the archive-only path.
+    combined = normalize_text(user_message).replace(" ", "")
     if "phase" in combined and any(term in combined for term in ("哪个", "哪一个", "归属", "属于", "步骤")):
         return True
     return any(marker in combined for marker in PROJECT_META_MARKERS)

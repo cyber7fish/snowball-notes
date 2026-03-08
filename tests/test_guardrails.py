@@ -113,6 +113,17 @@ class GuardrailTests(unittest.TestCase):
         result = check_guardrail(self.config, state, "propose_archive_turn")
         self.assertTrue(result.allowed)
 
+    def test_allows_concept_explanation_even_when_answer_mentions_project_meta_examples(self):
+        state = _make_state(event=_sample_event(
+            user_message="什么是 Guardrails？",
+            answer=(
+                "Guardrails 是运行时的确定性安全检查。比如项目进度 / Phase 归属这类 meta turn "
+                "不能变成知识 note；当问题只是“当前做到哪了”时，系统会直接 block。"
+            ),
+        ))
+        result = check_guardrail(self.config, state, "propose_create_note")
+        self.assertTrue(result.allowed)
+
     def test_allows_flag_for_review_always(self):
         state = _make_state(write_count=99, append_count=99,
                             event=_sample_event(source_confidence=0.1))
