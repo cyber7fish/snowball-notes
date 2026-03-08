@@ -17,6 +17,7 @@ from .calibrate.confidence_feedback import (
     render_calibration_report,
 )
 from .config import load_config
+from .demo import setup_demo_workspace
 from .embedding import build_embedding_provider, build_vector_store, run_embedding_check
 from .eval import EvalRunner, import_eval_cases, load_eval_cases, load_eval_report, render_eval_report
 from .observability.logger import JsonlLogger
@@ -110,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     eval_report_parser = eval_subparsers.add_parser("report")
     eval_report_parser.add_argument("run_id", nargs="?")
     eval_report_parser.add_argument("--baseline-run", default=None)
+    demo_parser = subparsers.add_parser("demo")
+    demo_subparsers = demo_parser.add_subparsers(dest="demo_command", required=True)
+    demo_setup_parser = demo_subparsers.add_parser("setup")
+    demo_setup_parser.add_argument("--dest", default="./demo-workspace")
     calibrate_parser = subparsers.add_parser("calibrate")
     calibrate_subparsers = calibrate_parser.add_subparsers(dest="calibrate_command", required=True)
     feedback_parser = calibrate_subparsers.add_parser("add-feedback")
@@ -119,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
     calibrate_subparsers.add_parser("report")
 
     args = parser.parse_args(argv)
+    if args.command == "demo":
+        if args.demo_command == "setup":
+            payload = setup_demo_workspace(args.dest)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
     config, db, vault, worker = build_runtime(args.config_path, build_worker=args.command == "worker")
     try:
         if args.command == "worker":

@@ -45,6 +45,30 @@ The default configuration writes runtime data under `./data`, logs under `./logs
 
 If `~/.snowball-notes.env` exists, Snowball loads it automatically before reading `config.yaml`. This is the recommended place to keep provider keys such as `DEEPSEEK_API_KEY` and `DASHSCOPE_API_KEY`. Existing exported environment variables still win, and you can override the file path with `SNOWBALL_ENV_FILE`.
 
+## Demo workspace
+
+If you want a repo-local demo without Codex transcripts, generate a sandbox workspace:
+
+```bash
+PYTHONPATH=src python3 -m snowball_notes.cli demo setup --dest ./demo-workspace
+```
+
+That command creates:
+
+- `demo-workspace/config.yaml`: offline `heuristic` + local embedding config
+- `demo-workspace/sessions/*.jsonl`: mock transcript fixtures
+- `demo-workspace/reports/sample_eval_report.txt`: a generated eval report from the bundled sample dataset
+- a seeded pending review row with trace and replay data for the review UI
+
+From there you can run:
+
+```bash
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml worker --once
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml review list
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml review serve --host 127.0.0.1 --port 8000
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml eval report
+```
+
 Intake modes:
 
 ```yaml
@@ -157,6 +181,7 @@ pip install -e ".[review]"
 - `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
 - `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report
 - `eval report [run_id] [--baseline-run RUN_ID]`: render a stored eval report
+- `demo setup [--dest PATH]`: create an offline demo workspace with transcripts, seeded review data, and a sample eval report
 - `calibrate add-feedback <turn_id> <trustworthy|partial|bad_parse>`: record parser confidence feedback
 - `calibrate report`: summarize confidence calibration buckets and recommendations
 

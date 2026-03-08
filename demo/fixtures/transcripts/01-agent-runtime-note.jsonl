@@ -1,0 +1,5 @@
+{"timestamp":"2026-03-08T09:00:00.000Z","type":"session_meta","payload":{"id":"conv_demo_create","cwd":"/tmp/snowball-demo","originator":"codex_cli_rs","cli_version":"0.112.0","model_provider":"heuristic"}}
+{"timestamp":"2026-03-08T09:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn_demo_create_1"}}
+{"timestamp":"2026-03-08T09:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"How should an agent runtime keep tool calls side-effect free until commit time?"}}
+{"timestamp":"2026-03-08T09:00:03.000Z","type":"event_msg","phase":"final_answer","payload":{"type":"agent_message","message":"Keep every tool call side-effect free during reasoning. Let the model inspect notes, extract reusable knowledge, and produce proposals first. After the loop ends, run a separate commit phase that validates the proposal set, enforces guardrails, and applies the final write atomically to the vault and SQLite."}}
+{"timestamp":"2026-03-08T09:00:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_demo_create_1"}}
