@@ -169,6 +169,48 @@ class EmbeddingTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertIn("missing embedding API key env", stderr.getvalue())
 
+    def test_embedding_check_reports_missing_dashscope_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "paths:",
+                        "  db: \"./data/snowball.db\"",
+                        "  log: \"./logs/snowball.jsonl\"",
+                        "vault:",
+                        "  path: \"./vault\"",
+                        "  inbox_dir: \"Inbox\"",
+                        "  archive_dir: \"Archive/Conversations\"",
+                        "  atomic_dir: \"Knowledge/Atomic\"",
+                        "intake:",
+                        "  transcript_dir: \"./sessions\"",
+                        "  parser_version: \"v1\"",
+                        "  min_response_length: 120",
+                        "  min_confidence_to_run: 0.50",
+                        "agent:",
+                        "  provider: \"heuristic\"",
+                        "  model: \"heuristic-v1\"",
+                        "embedding:",
+                        "  provider: \"dashscope\"",
+                        "  dashscope_api_key_env: \"DASHSCOPE_API_KEY\"",
+                        "worker:",
+                        "  poll_interval_seconds: 10",
+                        "  claim_timeout_seconds: 300",
+                        "  max_retries: 3",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=False):
+                with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+                    exit_code = main(["--config", str(config_path), "embedding", "check", "--provider", "dashscope"])
+            self.assertEqual(exit_code, 1)
+            self.assertIn("missing embedding API key env", stderr.getvalue())
+
     def test_embedding_check_uses_mocked_voyage_provider(self):
         class _FakeResponse:
             def __enter__(self):
@@ -200,6 +242,42 @@ class EmbeddingTests(unittest.TestCase):
                 self.assertTrue(result["ok"])
                 self.assertEqual(result["provider"], "voyage")
                 self.assertEqual(result["dimensions"], 3)
+                self.assertTrue(result["roundtrip_ok"])
+            finally:
+                db.close()
+
+    def test_embedding_check_uses_mocked_dashscope_provider(self):
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "data": [
+                            {"embedding": [0.1, 0.2, 0.3, 0.4]},
+                        ]
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = default_config(root)
+            config.embedding.provider = "dashscope"
+            config.embedding.dashscope_api_key_env = "DASHSCOPE_API_KEY"
+            config.embedding.dashscope_dimensions = 4
+            db = Database(config.db_path)
+            db.migrate()
+            try:
+                with mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"}):
+                    with mock.patch("snowball_notes.embedding.dashscope.request.urlopen", return_value=_FakeResponse()):
+                        result = run_embedding_check(config, db)
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["provider"], "dashscope")
+                self.assertEqual(result["dimensions"], 4)
                 self.assertTrue(result["roundtrip_ok"])
             finally:
                 db.close()

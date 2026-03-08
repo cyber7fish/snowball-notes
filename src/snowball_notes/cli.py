@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     embedding_parser = subparsers.add_parser("embedding")
     embedding_subparsers = embedding_parser.add_subparsers(dest="embedding_command", required=True)
     embedding_check_parser = embedding_subparsers.add_parser("check")
-    embedding_check_parser.add_argument("--provider", choices=["local", "voyage"], default=None)
+    embedding_check_parser.add_argument("--provider", choices=["local", "dashscope", "voyage"], default=None)
     embedding_check_parser.add_argument("--vector-store", choices=["sqlite_blob", "sqlite_vec"], default=None)
     embedding_check_parser.add_argument("--text", default=None)
     eval_parser = subparsers.add_parser("eval")

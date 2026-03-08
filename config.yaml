@@ -28,6 +28,10 @@ agent:
 
 embedding:
   provider: "local"
+  dashscope_model: "text-embedding-v4"
+  dashscope_dimensions: 1024
+  dashscope_api_key_env: "DASHSCOPE_API_KEY"
+  dashscope_api_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
   voyage_model: "voyage-3-lite"
   local_model: "hash-384"
   vector_store: "sqlite_blob"

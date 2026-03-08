@@ -61,6 +61,10 @@ class RetrievalConfig:
 @dataclass
 class EmbeddingConfig:
     provider: str = "local"
+    dashscope_model: str = "text-embedding-v4"
+    dashscope_dimensions: int = 1024
+    dashscope_api_key_env: str = "DASHSCOPE_API_KEY"
+    dashscope_api_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
     voyage_model: str = "voyage-3-lite"
     local_model: str = "hash-384"
     vector_store: str = "sqlite_blob"

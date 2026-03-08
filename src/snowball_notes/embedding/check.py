@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from ..utils import new_id, now_utc_iso, sha256_text
+from .dashscope import DashScopeEmbeddingProvider
 from .local import LocalHashEmbeddingProvider
 from .sqlite_blob import SQLiteBlobVectorStore
 from .sqlite_vec import SqliteVecStore
@@ -53,7 +54,7 @@ def run_embedding_check(
         and top_result.note_id == probe_id
         and similarity >= 0.999
     )
-    api_key_env = getattr(effective_config.embedding, "api_key_env", None)
+    api_key_env = _provider_api_key_env(effective_config)
     return {
         "ok": bool(vector) and roundtrip_ok,
         "provider": effective_config.embedding.provider,
@@ -65,12 +66,14 @@ def run_embedding_check(
         "roundtrip_similarity": similarity if top_result is not None else None,
         "timestamp": now_utc_iso(),
         "api_key_env": api_key_env,
-        "api_key_required": effective_config.embedding.provider == "voyage",
-        "api_base_url": getattr(effective_config.embedding, "api_base_url", None),
+        "api_key_required": effective_config.embedding.provider in {"voyage", "dashscope"},
+        "api_base_url": _provider_api_base_url(effective_config),
     }
 
 
 def _build_provider(config):
+    if config.embedding.provider == "dashscope":
+        return DashScopeEmbeddingProvider(config)
     if config.embedding.provider == "voyage":
         return VoyageEmbeddingProvider(config)
     return LocalHashEmbeddingProvider(config)
@@ -80,3 +83,19 @@ def _build_vector_store(config, db):
     if config.embedding.vector_store == "sqlite_vec":
         return SqliteVecStore(db)
     return SQLiteBlobVectorStore(db)
+
+
+def _provider_api_key_env(config) -> str | None:
+    if config.embedding.provider == "dashscope":
+        return config.embedding.dashscope_api_key_env
+    if config.embedding.provider == "voyage":
+        return config.embedding.api_key_env
+    return None
+
+
+def _provider_api_base_url(config) -> str | None:
+    if config.embedding.provider == "dashscope":
+        return config.embedding.dashscope_api_base_url
+    if config.embedding.provider == "voyage":
+        return config.embedding.api_base_url
+    return None

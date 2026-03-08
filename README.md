@@ -94,7 +94,19 @@ agent:
 
 and export `DEEPSEEK_API_KEY` before starting the worker.
 
-Retrieval defaults to an offline local embedding provider backed by SQLite. To switch to Voyage embeddings, set:
+Retrieval defaults to an offline local embedding provider backed by SQLite. To switch to Alibaba Cloud DashScope `text-embedding-v4`, set:
+
+```yaml
+embedding:
+  provider: "dashscope"
+  dashscope_model: "text-embedding-v4"
+  dashscope_dimensions: 1024
+  dashscope_api_key_env: "DASHSCOPE_API_KEY"
+```
+
+and export `DASHSCOPE_API_KEY`.
+
+Voyage is still supported if you prefer it:
 
 ```yaml
 embedding:
@@ -108,6 +120,7 @@ To verify the configured provider and vector store end to end, run:
 
 ```bash
 PYTHONPATH=src python3 -m snowball_notes.cli embedding check
+PYTHONPATH=src python3 -m snowball_notes.cli embedding check --provider dashscope
 PYTHONPATH=src python3 -m snowball_notes.cli embedding check --provider voyage
 ```
 
@@ -130,7 +143,7 @@ pip install -e ".[review]"
 - `review discard <review_id>`: resolve a review as intentionally discarded
 - `review reject <review_id>`: mark a flagged case rejected
 - `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
-- `embedding check [--provider local|voyage] [--vector-store sqlite_blob|sqlite_vec] [--text TEXT]`: verify provider and vector-store round-trip behavior
+- `embedding check [--provider local|dashscope|voyage] [--vector-store sqlite_blob|sqlite_vec] [--text TEXT]`: verify provider and vector-store round-trip behavior
 - `replay <trace_id> [--mode dump|logical|live]`: dump or rerun a saved replay bundle
 - `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
 - `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report
