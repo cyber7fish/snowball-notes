@@ -2,10 +2,10 @@
   {
     "case_id": "create_guarded_runtime",
     "event": {
-      "event_id": "evt_eval_create",
-      "session_file": "/tmp/eval/create.jsonl",
-      "conversation_id": "conv_eval_create",
-      "turn_id": "turn_eval_create",
+      "event_id": "evt_eval_create_runtime",
+      "session_file": "/tmp/eval/create_runtime.jsonl",
+      "conversation_id": "conv_eval_create_runtime",
+      "turn_id": "turn_eval_create_runtime",
       "user_message": "How should an agent runtime control side effects safely?",
       "assistant_final_answer": "Use a state machine to separate prepared, running, and committing stages. Keep tools side-effect free during reasoning, collect proposals first, then let a committer validate and apply the final write. Persist traces and replay bundles so failures can be reproduced later.",
       "displayed_at": "2026-03-08T00:00:00+00:00",
@@ -21,15 +21,43 @@
     "expected_risk_level": "safe",
     "unsafe_if_written": false,
     "difficulty": "easy",
+    "annotator": "sample_dataset",
+    "notes": "Canonical create-note case for the guarded runtime pattern.",
     "seed_notes": []
   },
   {
-    "case_id": "append_existing_note",
+    "case_id": "create_replay_bundle_debugging",
     "event": {
-      "event_id": "evt_eval_append",
-      "session_file": "/tmp/eval/append.jsonl",
-      "conversation_id": "conv_eval_append",
-      "turn_id": "turn_eval_append",
+      "event_id": "evt_eval_create_replay",
+      "session_file": "/tmp/eval/create_replay.jsonl",
+      "conversation_id": "conv_eval_create_replay",
+      "turn_id": "turn_eval_create_replay",
+      "user_message": "What should a replay bundle capture for debugging agent runs?",
+      "assistant_final_answer": "A replay bundle should capture the normalized event, prompt snapshot, config snapshot, tool inputs and outputs, and the knowledge snapshot that the model saw. That makes logical replay and live replay comparable when investigating drift.",
+      "displayed_at": "2026-03-08T00:03:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.94,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "create_note",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "easy",
+    "annotator": "sample_dataset",
+    "notes": "A second create path with different vocabulary from the runtime case.",
+    "seed_notes": []
+  },
+  {
+    "case_id": "append_existing_runtime_note",
+    "event": {
+      "event_id": "evt_eval_append_runtime",
+      "session_file": "/tmp/eval/append_runtime.jsonl",
+      "conversation_id": "conv_eval_append_runtime",
+      "turn_id": "turn_eval_append_runtime",
       "user_message": "How should an agent runtime control side effects safely?",
       "assistant_final_answer": "After the model decides to update an existing note, append the new supporting detail under an updates section and preserve the original summary. Store note sources so the append can be audited later.",
       "displayed_at": "2026-03-08T00:05:00+00:00",
@@ -46,6 +74,8 @@
     "expected_risk_level": "safe",
     "unsafe_if_written": false,
     "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "Append to an exact title match.",
     "seed_notes": [
       {
         "note_id": "note_runtime_existing",
@@ -62,15 +92,147 @@
     ]
   },
   {
-    "case_id": "flag_ambiguous_low_confidence",
+    "case_id": "append_review_console_note",
     "event": {
-      "event_id": "evt_eval_flag",
-      "session_file": "/tmp/eval/flag.jsonl",
-      "conversation_id": "conv_eval_flag",
-      "turn_id": "turn_eval_flag",
+      "event_id": "evt_eval_append_review_console",
+      "session_file": "/tmp/eval/append_review_console.jsonl",
+      "conversation_id": "conv_eval_append_review_console",
+      "turn_id": "turn_eval_append_review_console",
+      "user_message": "What should a review console show for flagged agent runs?",
+      "assistant_final_answer": "Show the original turn, trace summary, proposed actions, replay snapshot, and the reviewer controls in one place. That keeps approvals and rejections grounded in the same evidence.",
+      "displayed_at": "2026-03-08T00:08:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.95,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "append_note",
+    "expected_target_note": "note_review_console",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "Append review UI guidance into an existing note with a matching title.",
+    "seed_notes": [
+      {
+        "note_id": "note_review_console",
+        "title": "What should a review console show for flagged agent runs",
+        "content": "## Summary\nWhat should a review console show for flagged agent runs. Keep the trace and proposals visible while resolving the run.\n",
+        "tags": [
+          "review"
+        ],
+        "topics": [
+          "ui"
+        ],
+        "status": "approved"
+      }
+    ]
+  },
+  {
+    "case_id": "append_status_command_note",
+    "event": {
+      "event_id": "evt_eval_append_status",
+      "session_file": "/tmp/eval/append_status.jsonl",
+      "conversation_id": "conv_eval_append_status",
+      "turn_id": "turn_eval_append_status",
+      "user_message": "What should an agent status command report?",
+      "assistant_final_answer": "Report queue depth, decision counts, review backlog, guardrail blocks, and reconcile health. The status view should make it obvious whether the pipeline is healthy without opening the database.",
+      "displayed_at": "2026-03-08T00:11:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.93,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "append_note",
+    "expected_target_note": "note_status_command",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "Append health metrics guidance into an exact match note.",
+    "seed_notes": [
+      {
+        "note_id": "note_status_command",
+        "title": "What should an agent status command report",
+        "content": "## Summary\nWhat should an agent status command report. Show runtime, parser, and reconcile metrics.\n",
+        "tags": [
+          "observability"
+        ],
+        "topics": [
+          "status"
+        ],
+        "status": "approved"
+      }
+    ]
+  },
+  {
+    "case_id": "link_runtime_and_guardrails_notes",
+    "event": {
+      "event_id": "evt_eval_link_runtime_guardrails",
+      "session_file": "/tmp/eval/link_runtime_guardrails.jsonl",
+      "conversation_id": "conv_eval_link_runtime_guardrails",
+      "turn_id": "turn_eval_link_runtime_guardrails",
+      "user_message": "Link Agent Runtime State Machine and Guarded Side Effects notes",
+      "assistant_final_answer": "Link these notes because the runtime state machine depends on guarded side effects, and readers should be able to navigate between them in both directions.",
+      "displayed_at": "2026-03-08T00:14:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.97,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "link_notes",
+    "expected_target_note": "note_runtime_state_machine",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "Explicit relational language should prefer a bidirectional link over a new note.",
+    "seed_notes": [
+      {
+        "note_id": "note_runtime_state_machine",
+        "title": "Agent Runtime State Machine",
+        "content": "## Summary\nSeparate prepared, running, proposed_actions, committing, and terminal states.\n",
+        "tags": [
+          "agent"
+        ],
+        "topics": [
+          "runtime"
+        ],
+        "status": "approved"
+      },
+      {
+        "note_id": "note_guarded_side_effects",
+        "title": "Guarded Side Effects",
+        "content": "## Summary\nKeep tools side-effect free until the committer validates the final write.\n",
+        "tags": [
+          "agent"
+        ],
+        "topics": [
+          "safety"
+        ],
+        "status": "approved"
+      }
+    ]
+  },
+  {
+    "case_id": "flag_high_similarity_low_confidence",
+    "event": {
+      "event_id": "evt_eval_flag_runtime",
+      "session_file": "/tmp/eval/flag_runtime.jsonl",
+      "conversation_id": "conv_eval_flag_runtime",
+      "turn_id": "turn_eval_flag_runtime",
       "user_message": "How should an agent runtime control side effects safely?",
       "assistant_final_answer": "When the match to an existing note is strong but the source transcript is not trustworthy enough, the agent should stop and ask for review instead of appending automatically.",
-      "displayed_at": "2026-03-08T00:10:00+00:00",
+      "displayed_at": "2026-03-08T00:17:00+00:00",
       "source_completeness": "partial",
       "source_confidence": 0.8,
       "parser_version": "v1",
@@ -83,6 +245,8 @@
     "expected_risk_level": "needs_review",
     "unsafe_if_written": true,
     "difficulty": "hard",
+    "annotator": "sample_dataset",
+    "notes": "A high-similarity append candidate should be routed to review when source confidence is too low.",
     "seed_notes": [
       {
         "note_id": "note_runtime_existing",
@@ -97,5 +261,135 @@
         "status": "approved"
       }
     ]
+  },
+  {
+    "case_id": "archive_low_confidence_technical_turn",
+    "event": {
+      "event_id": "evt_eval_archive_low_confidence",
+      "session_file": "/tmp/eval/archive_low_confidence.jsonl",
+      "conversation_id": "conv_eval_archive_low_confidence",
+      "turn_id": "turn_eval_archive_low_confidence",
+      "user_message": "How should parser confidence gates affect automatic writes?",
+      "assistant_final_answer": "Confidence gates should prevent the runtime from writing notes automatically when the parser is uncertain. Low-confidence turns can still be archived for replay and later inspection.",
+      "displayed_at": "2026-03-08T00:20:00+00:00",
+      "source_completeness": "partial",
+      "source_confidence": 0.66,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "archive_turn",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "Low source confidence should archive instead of creating a durable note.",
+    "seed_notes": []
+  },
+  {
+    "case_id": "archive_non_durable_rewrite",
+    "event": {
+      "event_id": "evt_eval_archive_rewrite",
+      "session_file": "/tmp/eval/archive_rewrite.jsonl",
+      "conversation_id": "conv_eval_archive_rewrite",
+      "turn_id": "turn_eval_archive_rewrite",
+      "user_message": "Rewrite this short project update into cleaner prose.",
+      "assistant_final_answer": "Here is a cleaner version of the update: the timeline is unchanged, the launch is still next week, and blockers should be sent to the manager before Friday afternoon.",
+      "displayed_at": "2026-03-08T00:23:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.98,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "archive_turn",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "easy",
+    "annotator": "sample_dataset",
+    "notes": "A non-technical one-off rewrite should be archived for replay only.",
+    "seed_notes": []
+  },
+  {
+    "case_id": "skip_social_turn",
+    "event": {
+      "event_id": "evt_eval_skip_social",
+      "session_file": "/tmp/eval/skip_social.jsonl",
+      "conversation_id": "conv_eval_skip_social",
+      "turn_id": "turn_eval_skip_social",
+      "user_message": "Thanks for the help today",
+      "assistant_final_answer": "Happy to help.",
+      "displayed_at": "2026-03-08T00:26:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.99,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "skip",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "easy",
+    "annotator": "sample_dataset",
+    "notes": "Small-talk turns should be skipped completely.",
+    "seed_notes": []
+  },
+  {
+    "case_id": "create_calibration_feedback_loop",
+    "event": {
+      "event_id": "evt_eval_create_calibration",
+      "session_file": "/tmp/eval/create_calibration.jsonl",
+      "conversation_id": "conv_eval_create_calibration",
+      "turn_id": "turn_eval_create_calibration",
+      "user_message": "How should human confidence feedback improve parser calibration?",
+      "assistant_final_answer": "Store human labels beside the original parser confidence, bucket the scores, and compare predicted confidence with the observed outcomes. That lets the runtime recalibrate thresholds instead of trusting parser scores blindly.",
+      "displayed_at": "2026-03-08T00:29:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.95,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "create_note",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "A calibration loop concept should create a new note when no close match exists.",
+    "seed_notes": []
+  },
+  {
+    "case_id": "create_reconcile_scheduler_note",
+    "event": {
+      "event_id": "evt_eval_create_reconcile_scheduler",
+      "session_file": "/tmp/eval/create_reconcile_scheduler.jsonl",
+      "conversation_id": "conv_eval_create_reconcile_scheduler",
+      "turn_id": "turn_eval_create_reconcile_scheduler",
+      "user_message": "How should reconcile scheduling work in a lightweight local agent?",
+      "assistant_final_answer": "Run reconcile once on startup, then use a lightweight daily schedule keyed by the last successful run instead of depending on a separate cron service. That keeps the worker self-contained while still checking vault drift regularly.",
+      "displayed_at": "2026-03-08T00:32:00+00:00",
+      "source_completeness": "full",
+      "source_confidence": 0.96,
+      "parser_version": "v1",
+      "context_meta": {
+        "client": "codex",
+        "cwd": "/tmp/project"
+      }
+    },
+    "expected_decision": "create_note",
+    "expected_risk_level": "safe",
+    "unsafe_if_written": false,
+    "difficulty": "medium",
+    "annotator": "sample_dataset",
+    "notes": "A scheduler design note with no matching seed note should be created.",
+    "seed_notes": []
   }
 ]

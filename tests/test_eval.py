@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from snowball_notes.cli import build_runtime, main
+from snowball_notes.eval.runner import load_eval_cases
 from snowball_notes.eval.runner import load_eval_report
 
 
@@ -199,5 +200,49 @@ class EvalTests(unittest.TestCase):
                 self.assertEqual(report["review_precision"], 1.0)
                 self.assertEqual(report["auto_action_acceptance_rate"], 1.0)
                 self.assertEqual(report["logical_replay_match_rate"], 1.0)
+            finally:
+                db.close()
+
+    def test_repository_sample_fixture_loads_and_runs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "config.yaml"
+            fixture_path = Path(__file__).resolve().parents[1] / "eval" / "fixtures" / "sample_cases.json"
+            _write_config(config_path)
+
+            stdout = io.StringIO()
+            with mock.patch("sys.stdout", stdout):
+                exit_code = main(["--config", str(config_path), "eval", "load", str(fixture_path), "--replace"])
+            self.assertEqual(exit_code, 0)
+            self.assertIn("loaded 12 eval cases", stdout.getvalue())
+
+            _, db, _, _ = build_runtime(str(config_path), build_worker=False)
+            try:
+                cases = load_eval_cases(db)
+                self.assertEqual(len(cases), 12)
+                expected_decisions = {case.expected_decision for case in cases}
+                self.assertEqual(
+                    expected_decisions,
+                    {"create_note", "append_note", "link_notes", "flagged", "archive_turn", "skip"},
+                )
+            finally:
+                db.close()
+
+            stdout = io.StringIO()
+            with mock.patch("sys.stdout", stdout):
+                exit_code = main(["--config", str(config_path), "eval", "run"])
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("Decision accuracy:", output)
+            self.assertIn("Review precision:", output)
+            self.assertIn("Auto action acceptance rate:", output)
+
+            _, db, _, _ = build_runtime(str(config_path), build_worker=False)
+            try:
+                report = load_eval_report(db)
+                self.assertIsNotNone(report)
+                self.assertEqual(report["total_cases"], 12)
+                self.assertIn("results", report)
+                self.assertEqual(len(report["results"]), 12)
             finally:
                 db.close()
