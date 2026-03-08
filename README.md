@@ -43,6 +43,8 @@ PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
+If `~/.snowball-notes.env` exists, Snowball loads it automatically before reading `config.yaml`. This is the recommended place to keep provider keys such as `DEEPSEEK_API_KEY` and `DASHSCOPE_API_KEY`. Existing exported environment variables still win, and you can override the file path with `SNOWBALL_ENV_FILE`.
+
 Intake modes:
 
 ```yaml
@@ -80,7 +82,7 @@ agent:
   model: "gpt-5.2-codex"
 ```
 
-and export `OPENAI_API_KEY` before starting the worker.
+and set `OPENAI_API_KEY` in `~/.snowball-notes.env` or export it before starting the worker.
 
 To run against DeepSeek's tool-calling chat API, set:
 
@@ -92,7 +94,7 @@ agent:
   api_base_url: "https://api.deepseek.com/chat/completions"
 ```
 
-and export `DEEPSEEK_API_KEY` before starting the worker.
+and set `DEEPSEEK_API_KEY` in `~/.snowball-notes.env` or export it before starting the worker.
 
 Retrieval defaults to an offline local embedding provider backed by SQLite. To switch to Alibaba Cloud DashScope `text-embedding-v4`, set:
 
@@ -104,7 +106,7 @@ embedding:
   dashscope_api_key_env: "DASHSCOPE_API_KEY"
 ```
 
-and export `DASHSCOPE_API_KEY`.
+and set `DASHSCOPE_API_KEY` in `~/.snowball-notes.env` or export it.
 
 Voyage is still supported if you prefer it:
 
@@ -114,7 +116,14 @@ embedding:
   voyage_model: "voyage-3-lite"
 ```
 
-and export `VOYAGE_API_KEY`.
+and set `VOYAGE_API_KEY` in `~/.snowball-notes.env` or export it.
+
+Example `~/.snowball-notes.env`:
+
+```bash
+export DEEPSEEK_API_KEY="..."
+export DASHSCOPE_API_KEY="..."
+```
 
 To verify the configured provider and vector store end to end, run:
 

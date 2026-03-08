@@ -163,7 +163,7 @@ class EmbeddingTests(unittest.TestCase):
             )
             stdout = io.StringIO()
             stderr = io.StringIO()
-            with mock.patch.dict(os.environ, {}, clear=False):
+            with mock.patch.dict(os.environ, {"SNOWBALL_ENV_FILE": ""}, clear=True):
                 with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
                     exit_code = main(["--config", str(config_path), "embedding", "check", "--provider", "voyage"])
             self.assertEqual(exit_code, 1)
@@ -205,7 +205,7 @@ class EmbeddingTests(unittest.TestCase):
             )
             stdout = io.StringIO()
             stderr = io.StringIO()
-            with mock.patch.dict(os.environ, {}, clear=False):
+            with mock.patch.dict(os.environ, {"SNOWBALL_ENV_FILE": ""}, clear=True):
                 with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
                     exit_code = main(["--config", str(config_path), "embedding", "check", "--provider", "dashscope"])
             self.assertEqual(exit_code, 1)

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import os
+import re
 
 from .utils import parse_scalar
+
+DEFAULT_ENV_FILE_NAME = ".snowball-notes.env"
+ENV_ASSIGNMENT_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 
 @dataclass
@@ -155,6 +160,7 @@ def default_config(project_root: Path) -> SnowballConfig:
 
 
 def load_config(path: str | Path | None = None) -> SnowballConfig:
+    _load_standard_env_file()
     if path is None:
         env_path = os.environ.get("SNOWBALL_CONFIG")
         if env_path:
@@ -169,6 +175,48 @@ def load_config(path: str | Path | None = None) -> SnowballConfig:
     data = _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
     _apply_mapping(config, data)
     return config
+
+
+def _load_standard_env_file() -> Path | None:
+    env_path = os.environ.get("SNOWBALL_ENV_FILE")
+    if env_path is not None:
+        env_path = env_path.strip()
+        if not env_path:
+            return None
+        candidate = Path(os.path.expanduser(env_path))
+    else:
+        candidate = Path.home() / DEFAULT_ENV_FILE_NAME
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    for raw_line in candidate.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_env_assignment(raw_line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        os.environ.setdefault(key, value)
+    return candidate
+
+
+def _parse_env_assignment(raw_line: str) -> tuple[str, str] | None:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        return None
+    match = ENV_ASSIGNMENT_RE.match(line)
+    if match is None:
+        return None
+    key, raw_value = match.groups()
+    value = raw_value.strip()
+    if not value:
+        return key, ""
+    if value[0] in {"'", '"'} and value[-1] == value[0]:
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            parsed = value[1:-1]
+        return key, str(parsed)
+    if " #" in value:
+        value = value.split(" #", 1)[0].rstrip()
+    return key, value
 
 
 def _parse_simple_yaml(content: str) -> dict[str, Any]:
