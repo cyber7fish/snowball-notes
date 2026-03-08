@@ -83,6 +83,37 @@ graph LR
 - **Eval Runner** — Sandboxed execution of annotated test cases with decision accuracy, safety, cost, and replay metrics
 - **Review UI** — CLI and optional FastAPI server for human review of flagged cases
 
+## Intake
+
+Intake converts raw Codex session transcripts (JSONL) into `StandardEvent`s and enqueues them for the agent.
+
+### Transcript Parsing
+
+`parse_session_file` walks each JSONL record and reconstructs turns by pairing `task_started` → `user_message` → `response_item` / `agent_message` → `task_complete`. It handles partial turns (`turn_aborted`) and multiple transcript formats (response-API `response_item` and legacy `event_msg`).
+
+### Source Confidence
+
+Each turn is assigned a `source_confidence` score (0.0–1.0) via a penalty-based model. The base score starts at 1.0 and is reduced by:
+
+| Penalty | Delta | Condition |
+|---|---|---|
+| `missing_final_answer` | −0.50 | No assistant response was parsed |
+| `missing_user_message` | −0.20 | No user message was captured |
+| `partial_source` | −0.20 | Turn is partially reconstructed |
+| `parser_version_drift` | −0.10 | Parser version differs from current stable |
+| `short_final_answer` | −0.15 | Answer is fewer than 50 characters |
+| `duplicate_task_complete` | −0.20 | Turn emitted multiple `task_complete` events |
+
+The full breakdown (including each penalty and the contributing signals) is stored in `context_meta.source_confidence_breakdown`, making confidence scores fully explainable and auditable. Guardrails use this score to gate write operations — low confidence means the agent cannot create or append notes.
+
+### Polling Modes
+
+Three intake modes are supported, all configured via `config.yaml`:
+
+- **`transcript_poll`** — Recursive scan with SQLite cursors; skips files whose `mtime` has not changed since the last scan
+- **`transcript_watch`** — In-process watch with `mtime`-based change detection; re-scans files that gained new content or have stale (empty-answer) events
+- **`cli_wrap`** — Single rolling JSONL file for CLI-wrapped sessions
+
 ## Memory
 
 The agent uses two distinct memory layers with different scopes and lifetimes.
@@ -375,6 +406,41 @@ snowball-notes/
   eval/fixtures/    # Annotated eval cases (25 cases, 6 decision types)
   config.yaml
 ```
+
+## Observability
+
+### AgentTrace
+
+Every agent run writes an `AgentTrace` row to SQLite recording: `trace_id`, `prompt_version`, `model_name`, per-step tool calls (name, input, output, success, guardrail blocked, duration), `final_decision`, `final_confidence`, and aggregate counters (`total_steps`, `total_input_tokens`, `total_output_tokens`, `total_duration_ms`).
+
+### Audit Log
+
+All state transitions, commit blocks, commit errors, and reconcile results are written to the `audit_logs` table with `event_type`, `detail_json`, and optional `trace_id` / `task_id` foreign keys. This provides a permanent, queryable history of every system-level decision.
+
+### Health Metrics (`snowball status`)
+
+`collect_agent_health` aggregates over a configurable time window:
+
+- Run counts by terminal state (`completed`, `flagged`, `failed_*`)
+- Decision distribution (`create_note`, `append_note`, `skip`, `flagged`, etc.)
+- Avg steps, tokens, duration per run
+- Tool error rate, guardrail block rate, commit rejection rate
+- Review queue depth, review acceptance rate
+- Last reconcile status (ok / mismatch, orphan count, missing count)
+
+`collect_parser_health` reports avg `source_confidence` and low-confidence rate across recent events.
+
+### Reconcile
+
+`reconcile_vault_and_db` performs a bidirectional audit between the Obsidian vault filesystem and the SQLite `notes` table:
+
+1. **Promote auto-approved** — Notes that were committed by the agent (`status = 'approved'`) but still live in `Inbox/` are moved to `Knowledge/Atomic/`
+2. **Normalize filenames** — Re-derives the expected filename from the note title and renames files that have drifted
+3. **Normalize links** — Updates Obsidian wiki-links inside note bodies when referenced note titles have changed
+4. **Orphan detection** — Vault `.md` files with no matching DB row
+5. **Missing detection** — DB rows whose `vault_path` no longer exists on disk
+
+Results are written to `audit_logs` and surfaced by `snowball status`.
 
 ## Design Notes
 
