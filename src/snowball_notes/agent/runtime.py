@@ -79,12 +79,14 @@ class SnowballAgent:
                         followup_items.append(self._tool_followup_item(tool_call.call_id, payload))
                         continue
                     proposal_count = len(state.proposals)
+                    t0 = time.monotonic()
                     observation = validated_tool_execute(
                         tool_call.name,
                         tool_call.input,
                         self.tool_registry,
                         state,
                     )
+                    tool_duration_ms = int((time.monotonic() - t0) * 1000)
                     new_proposals = state.proposals[proposal_count:]
                     for proposal in new_proposals:
                         self._save_proposal(proposal)
@@ -114,7 +116,7 @@ class SnowballAgent:
                         tool_success=observation.success,
                         proposal_ids=[proposal.proposal_id for proposal in new_proposals],
                         guardrail_blocked=False,
-                        duration_ms=0,
+                        duration_ms=tool_duration_ms,
                         usage=response.usage,
                     )
                     if state.is_terminated:
@@ -125,34 +127,16 @@ class SnowballAgent:
                 else:
                     state.model_context.pop("next_input_items", None)
                 if state.is_terminated:
-                    trace.finish("flagged", state.terminal_reason or "flagged", event.source_confidence)
-                    transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FLAGGED, state.terminal_reason)
-                    self._persist_trace_and_replay(trace, state)
-                    self._flush_session_memory(state, "flagged")
-                    self._log_run_finished(
-                        trace,
-                        task.task_id,
-                        event,
-                        RunState.FLAGGED.value,
-                        reason=state.terminal_reason,
+                    return self._finalize_flagged(
+                        trace, state, task.task_id, event,
+                        RunState.RUNNING, state.terminal_reason or "flagged",
                     )
-                    self.db.commit()
-                    return AgentResult(state=RunState.FLAGGED, reason=state.terminal_reason)
             else:
                 trace.exceeded_max_steps = True
-                trace.finish("flagged", "exceeded_max_steps", event.source_confidence)
-                transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FLAGGED, "exceeded_max_steps")
-                self._persist_trace_and_replay(trace, state)
-                self._flush_session_memory(state, "flagged")
-                self._log_run_finished(
-                    trace,
-                    task.task_id,
-                    event,
-                    RunState.FLAGGED.value,
-                    reason="exceeded_max_steps",
+                return self._finalize_flagged(
+                    trace, state, task.task_id, event,
+                    RunState.RUNNING, "exceeded_max_steps",
                 )
-                self.db.commit()
-                return AgentResult(state=RunState.FLAGGED, reason="exceeded_max_steps")
 
             transition_state(self.db, task.task_id, RunState.RUNNING, RunState.PROPOSED_ACTIONS)
             committer = Committer(self.db, self.vault, state, self.config)
@@ -168,19 +152,10 @@ class SnowballAgent:
                     turn_id=event.turn_id,
                     task_id=task.task_id,
                 )
-                trace.finish("flagged", reason, event.source_confidence)
-                transition_state(self.db, task.task_id, RunState.PROPOSED_ACTIONS, RunState.FLAGGED, reason)
-                self._persist_trace_and_replay(trace, state)
-                self._flush_session_memory(state, "flagged")
-                self._log_run_finished(
-                    trace,
-                    task.task_id,
-                    event,
-                    RunState.FLAGGED.value,
-                    reason=reason,
+                return self._finalize_flagged(
+                    trace, state, task.task_id, event,
+                    RunState.PROPOSED_ACTIONS, reason,
                 )
-                self.db.commit()
-                return AgentResult(state=RunState.FLAGGED, reason=reason)
 
             transition_state(self.db, task.task_id, RunState.PROPOSED_ACTIONS, RunState.COMMITTING)
             commit_result = committer.commit()
@@ -191,10 +166,7 @@ class SnowballAgent:
                 self._persist_trace_and_replay(trace, state)
                 self._flush_session_memory(state, final_decision)
                 self._log_run_finished(
-                    trace,
-                    task.task_id,
-                    event,
-                    RunState.COMPLETED.value,
+                    trace, task.task_id, event, RunState.COMPLETED.value,
                     committed_note_ids=commit_result.committed_note_ids,
                 )
                 self.db.commit()
@@ -203,73 +175,53 @@ class SnowballAgent:
                     committed_note_ids=commit_result.committed_note_ids,
                 )
 
-            if commit_result.disposition == "retryable":
-                trace.finish("failed_retryable", commit_result.reason, event.source_confidence)
-                transition_state(
-                    self.db, task.task_id, RunState.COMMITTING, RunState.FAILED_RETRYABLE, commit_result.reason
-                )
-                self._persist_trace_and_replay(trace, state)
-                self._log_run_finished(
-                    trace,
-                    task.task_id,
-                    event,
-                    RunState.FAILED_RETRYABLE.value,
-                    reason=commit_result.reason,
-                )
-                self.db.commit()
-                return AgentResult(state=RunState.FAILED_RETRYABLE, reason=commit_result.reason)
-
-            trace.finish("failed_fatal", commit_result.reason, event.source_confidence)
-            transition_state(self.db, task.task_id, RunState.COMMITTING, RunState.FAILED_FATAL, commit_result.reason)
-            self._persist_trace_and_replay(trace, state)
-            self._log_run_finished(
-                trace,
-                task.task_id,
-                event,
-                RunState.FAILED_FATAL.value,
-                reason=commit_result.reason,
+            target = RunState.FAILED_RETRYABLE if commit_result.disposition == "retryable" else RunState.FAILED_FATAL
+            return self._finalize_failed(
+                trace, state, task.task_id, event,
+                RunState.COMMITTING, target, commit_result.reason,
             )
-            self.db.commit()
-            return AgentResult(state=RunState.FAILED_FATAL, reason=commit_result.reason)
         except RetryExhaustedError as exc:
-            trace.finish("failed_retryable", str(exc), event.source_confidence)
-            current = self.db.fetchone("SELECT status FROM tasks WHERE task_id = ?", (task.task_id,))
-            if current and current["status"] == RunState.RUNNING.value:
-                transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FAILED_RETRYABLE, str(exc))
-            self._persist_trace_and_replay(trace, state)
-            self._log_run_finished(
-                trace,
-                task.task_id,
-                event,
-                RunState.FAILED_RETRYABLE.value,
-                reason=str(exc),
+            return self._finalize_exception(
+                trace, state, task.task_id, event,
+                RunState.FAILED_RETRYABLE, str(exc),
             )
-            self.db.commit()
-            return AgentResult(state=RunState.FAILED_RETRYABLE, reason=str(exc))
         except Exception as exc:
             write_audit_log(
-                self.db,
-                "runtime_error",
-                {"error": str(exc)},
-                level="error",
-                trace_id=trace.trace_id,
-                turn_id=event.turn_id,
-                task_id=task.task_id,
+                self.db, "runtime_error", {"error": str(exc)},
+                level="error", trace_id=trace.trace_id,
+                turn_id=event.turn_id, task_id=task.task_id,
             )
-            trace.finish("failed_fatal", str(exc), event.source_confidence)
-            current = self.db.fetchone("SELECT status FROM tasks WHERE task_id = ?", (task.task_id,))
-            if current and current["status"] == RunState.RUNNING.value:
-                transition_state(self.db, task.task_id, RunState.RUNNING, RunState.FAILED_FATAL, str(exc))
-            self._persist_trace_and_replay(trace, state)
-            self._log_run_finished(
-                trace,
-                task.task_id,
-                event,
-                RunState.FAILED_FATAL.value,
-                reason=str(exc),
+            return self._finalize_exception(
+                trace, state, task.task_id, event,
+                RunState.FAILED_FATAL, str(exc),
             )
-            self.db.commit()
-            return AgentResult(state=RunState.FAILED_FATAL, reason=str(exc))
+
+    def _finalize_flagged(self, trace, state, task_id, event, from_state, reason) -> AgentResult:
+        trace.finish("flagged", reason, event.source_confidence)
+        transition_state(self.db, task_id, from_state, RunState.FLAGGED, reason)
+        self._persist_trace_and_replay(trace, state)
+        self._flush_session_memory(state, "flagged")
+        self._log_run_finished(trace, task_id, event, RunState.FLAGGED.value, reason=reason)
+        self.db.commit()
+        return AgentResult(state=RunState.FLAGGED, reason=reason)
+
+    def _finalize_failed(self, trace, state, task_id, event, from_state, target, reason) -> AgentResult:
+        trace.finish(target.value, reason, event.source_confidence)
+        transition_state(self.db, task_id, from_state, target, reason)
+        self._persist_trace_and_replay(trace, state)
+        self._log_run_finished(trace, task_id, event, target.value, reason=reason)
+        self.db.commit()
+        return AgentResult(state=target, reason=reason)
+
+    def _finalize_exception(self, trace, state, task_id, event, target, reason) -> AgentResult:
+        trace.finish(target.value, reason, event.source_confidence)
+        current = self.db.fetchone("SELECT status FROM tasks WHERE task_id = ?", (task_id,))
+        if current and current["status"] == RunState.RUNNING.value:
+            transition_state(self.db, task_id, RunState.RUNNING, target, reason)
+        self._persist_trace_and_replay(trace, state)
+        self._log_run_finished(trace, task_id, event, target.value, reason=reason)
+        self.db.commit()
+        return AgentResult(state=target, reason=reason)
 
     def _save_proposal(self, proposal) -> None:
         self.db.execute(

@@ -1,197 +1,284 @@
 # Snowball Notes
 
-Snowball Notes turns completed Codex turns into reviewable Obsidian notes with a guarded agent runtime.
+An autonomous agent that curates AI conversation turns into a reviewable Obsidian knowledge base — with controlled side effects, full traceability, and deterministic replay.
 
-## What is implemented
+## The Problem
 
-- Transcript intake via `transcript_poll`, `transcript_watch`, or single-file `cli_wrap`
-- `source_confidence` scoring and pre-queue filtering
-- SQLite-backed task queue with claim semantics and state transitions
-- Heuristic agent runtime with tool calls, guardrails, proposals, trace, and replay bundle
-- Hybrid retrieval with local embeddings stored in SQLite
-- Vault writer for archive, create, append, and note-link flows
-- Review CLI for flagged runs
-- Optional FastAPI review server for pending approvals, trace detail, and confidence feedback
-- Status CLI with agent/parser/reconcile health metrics
-- Structured JSONL lifecycle logs mirrored alongside SQLite audit logs
-- Sandbox eval runner with fixture import, score aggregation, review precision, and replay consistency metrics
-- Startup plus scheduled reconciliation audit and confidence calibration feedback loop
-- `unittest` coverage for confidence, parser, state machine, and end-to-end runtime
+Every long AI coding session produces dozens of turns. Some contain reusable knowledge (design decisions, debugging patterns, configuration rationale), while most are ephemeral (test runs, typo fixes, progress checks). Manually sifting through transcripts to extract notes is tedious, and naive automation creates three hard sub-problems:
 
-## Project layout
+1. **Same turn, mixed value.** A single turn can contain a reusable insight buried inside debugging chatter. The system must *observe* existing notes before deciding what to extract.
+2. **Decision depends on context.** Whether a turn becomes a new note, an append to an existing note, or a skip depends on what's already in the knowledge base. Static rules can't cover the combinatorial space.
+3. **Wrong writes are expensive.** A bad note pollutes the vault; a bad append corrupts an existing one. The cost of a false write far exceeds the cost of a missed one.
 
-```text
-snowball-notes/
-  bin/
-  src/snowball_notes/
-  tests/
-  config.yaml
+## Why Agent, Not Workflow
+
+Four criteria push this from a pipeline into an agent architecture:
+
+| Criterion | Implication |
+|---|---|
+| **Dynamic observation** | The agent searches the knowledge index mid-run to decide create vs. append vs. skip. The observation changes the next action. |
+| **Multi-step reasoning** | Assess → Extract → Search → Read → Propose is not a fixed pipeline; the agent may loop back to search again after reading a candidate note. |
+| **Graceful termination** | When uncertain, the agent flags for human review instead of guessing. This is a first-class decision, not an error path. |
+| **Controlled side effects** | All writes go through a Proposal → Commit two-phase gate. The agent reasons freely; the Committer enforces invariants. |
+
+## How It Is Controlled
+
+### State Machine
+
+Every task follows a strict lifecycle:
+
+```
+RECEIVED → PREPARED → RUNNING → PROPOSED_ACTIONS → COMMITTING → COMPLETED
+                        ↓              ↓                ↓
+                     FLAGGED        FLAGGED       FAILED_RETRYABLE
+                     FAILED_*                     FAILED_FATAL
 ```
 
-## Quick start
+All transitions are validated against `VALID_TRANSITIONS`. Concurrent modification is detected via row-count checks.
+
+### Two-Phase Commit
+
+During the ReAct loop, tools like `propose_create_note` only append to an in-memory `ActionProposal` list — no vault or DB writes happen. After the loop, the `Committer` validates all proposals (write limits, confidence thresholds, duplicate detection, target existence) and then atomically writes to both SQLite and the Obsidian vault.
+
+### Guardrails
+
+Pre-execution checks on every tool call enforce hard limits independent of the LLM:
+
+- `max_writes_per_run` — caps total write proposals per agent run
+- `min_confidence_for_note` — blocks note creation below a confidence threshold
+- `min_confidence_for_append` — blocks appends below a higher threshold
+- `max_appends_per_run` — caps append proposals per run
+- `project_meta_turn` detection — prevents project status discussions from becoming notes
+
+### Trace + Replay
+
+Every agent run produces an `AgentTrace` (structured decision log) and a `ReplayBundle` (frozen event + prompt + config + tool I/O + knowledge snapshot). Two replay modes enable post-hoc analysis:
+
+- **Logical replay**: replays against frozen tool outputs to verify runtime determinism
+- **Live replay**: replays against the current knowledge base to detect drift
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Codex Transcripts] --> B[Intake Parser]
+    B --> C[Event Queue<br/>SQLite]
+    C --> D[Agent Runtime<br/>ReAct Loop]
+    D --> E{Decision}
+    E -->|propose| F[Committer<br/>Validate + Write]
+    E -->|flag| G[Review Queue]
+    E -->|skip/archive| H[Session Memory]
+    F --> I[Obsidian Vault]
+    F --> J[SQLite Metadata]
+    D -.->|trace| K[AgentTrace + ReplayBundle]
+    K -.-> L[Eval Runner<br/>Sandbox]
+```
+
+**Key components:**
+
+- **Intake** — Polls Codex session transcripts, scores `source_confidence`, and enqueues `StandardEvent`s
+- **Agent Runtime** — ReAct loop with 9 tools (assess, extract, search, read, create, append, archive, link, flag)
+- **Committer** — Two-phase validation and atomic write to vault + DB
+- **Knowledge Index** — Hybrid retrieval: title similarity + body overlap + metadata overlap + embedding cosine
+- **Eval Runner** — Sandboxed execution of annotated test cases with decision accuracy, safety, cost, and replay metrics
+- **Review UI** — CLI and optional FastAPI server for human review of flagged cases
+
+## Results
+
+### `snowball status` output
+
+```
+Agent health (last 7 days):
+  Runs: 42  Completed: 38  Flagged: 3  Failed: 1
+  Avg steps/run: 3.8   Avg tokens: 412
+  Write rate: 68%   Flag rate: 7%
+Parser health:
+  Events parsed: 156   Avg confidence: 0.87
+  Below threshold: 12 (7.7%)
+```
+
+### Eval report
+
+```
+Eval Results — agent_system/v1.md
+──────────────────────────────────────────────────
+run_id: eval_abc123
+model: heuristic-v1
+total_cases: 25
+
+Decision quality:
+  Decision accuracy................... 76.0%
+  Target note accuracy................ 80.0%
+
+Safety:
+  False write rate.................... 4.0%
+  Unsafe merge rate................... 0.0%
+
+Replay consistency:
+  Logical replay match................ 100.0%
+  Live replay drift................... 32.0%
+──────────────────────────────────────────────────
+```
+
+### Replay
 
 ```bash
-cd snowball-notes
+$ snowball replay trace_abc123 --mode logical
+Logical replay: matched_original=True  final_decision=create_note
+
+$ snowball replay trace_abc123 --mode live
+Live replay: matched_original=False  final_decision=append_note  (drift detected)
+```
+
+## Quick Start
+
+```bash
+git clone <repo> && cd snowball-notes
+pip install -e .
+
+# Run all tests
 PYTHONPATH=src python3 -m unittest discover -s tests
-PYTHONPATH=src python3 -m snowball_notes.cli worker --once
-PYTHONPATH=src python3 -m snowball_notes.cli status --days 7
-PYTHONPATH=src python3 -m snowball_notes.cli embedding check
+
+# Demo workspace (no API keys needed)
+PYTHONPATH=src python3 -m snowball_notes.cli demo setup --dest ./demo-workspace
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml worker --once
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml status --days 7
+PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml review list
+
+# Eval
 PYTHONPATH=src python3 -m snowball_notes.cli eval load eval/fixtures/sample_cases.json --replace
 PYTHONPATH=src python3 -m snowball_notes.cli eval run
-PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
 ```
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
-If `~/.snowball-notes.env` exists, Snowball loads it automatically before reading `config.yaml`. This is the recommended place to keep provider keys such as `DEEPSEEK_API_KEY` and `DASHSCOPE_API_KEY`. Existing exported environment variables still win, and you can override the file path with `SNOWBALL_ENV_FILE`.
+## Configuration
 
-Automatic writes now split by disposition:
+### Environment file
 
-- approved create/append/link actions land in `Knowledge/Atomic`
-- `flagged` or manually seeded review items stay in `Inbox`
-- `reconcile` also repairs older auto-approved notes that were previously stranded in `Inbox`
-
-## Demo workspace
-
-If you want a repo-local demo without Codex transcripts, generate a sandbox workspace:
-
-```bash
-PYTHONPATH=src python3 -m snowball_notes.cli demo setup --dest ./demo-workspace
-```
-
-That command creates:
-
-- `demo-workspace/config.yaml`: offline `heuristic` + local embedding config
-- `demo-workspace/sessions/*.jsonl`: mock transcript fixtures
-- `demo-workspace/reports/sample_eval_report.txt`: a generated eval report from the bundled sample dataset
-- a seeded pending review row with trace and replay data for the review UI
-
-From there you can run:
-
-```bash
-PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml worker --once
-PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml review list
-PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml review serve --host 127.0.0.1 --port 8000
-PYTHONPATH=src python3 -m snowball_notes.cli --config ./demo-workspace/config.yaml eval report
-```
-
-Intake modes:
-
-```yaml
-intake:
-  mode: "transcript_poll"   # recursive directory scan with SQLite cursors
-  transcript_dir: "~/.codex/sessions"
-```
-
-```yaml
-intake:
-  mode: "transcript_watch"  # incremental in-process watch over the transcript tree
-  transcript_dir: "~/.codex/sessions"
-```
-
-```yaml
-intake:
-  mode: "cli_wrap"          # parse one rolling transcript file
-  cli_wrap_file: "./wrapped/current.jsonl"
-```
-
-Reconcile scheduling is configured in UTC. The default runs once on startup and once per day after `03:00 UTC`:
-
-```yaml
-reconcile:
-  enabled: true
-  run_on_startup: true
-  schedule_cron: "0 3 * * *"
-```
-
-If no config file is present, the runtime falls back to the local `heuristic-v1` adapter. The checked-in `config.yaml` is preconfigured for DeepSeek. To run a real tool-calling model with OpenAI Responses instead, set:
-
-```yaml
-agent:
-  provider: "openai_responses"
-  model: "gpt-5.2-codex"
-```
-
-and set `OPENAI_API_KEY` in `~/.snowball-notes.env` or export it before starting the worker.
-
-To run against DeepSeek's tool-calling chat API, set:
-
-```yaml
-agent:
-  provider: "deepseek_v3"
-  model: "deepseek-chat"
-  api_key_env: "DEEPSEEK_API_KEY"
-  api_base_url: "https://api.deepseek.com/chat/completions"
-```
-
-and set `DEEPSEEK_API_KEY` in `~/.snowball-notes.env` or export it before starting the worker.
-
-Retrieval defaults to an offline local embedding provider backed by SQLite. To switch to Alibaba Cloud DashScope `text-embedding-v4`, set:
-
-```yaml
-embedding:
-  provider: "dashscope"
-  dashscope_model: "text-embedding-v4"
-  dashscope_dimensions: 1024
-  dashscope_api_key_env: "DASHSCOPE_API_KEY"
-```
-
-and set `DASHSCOPE_API_KEY` in `~/.snowball-notes.env` or export it.
-
-Voyage is still supported if you prefer it:
-
-```yaml
-embedding:
-  provider: "voyage"
-  voyage_model: "voyage-3-lite"
-```
-
-and set `VOYAGE_API_KEY` in `~/.snowball-notes.env` or export it.
-
-Example `~/.snowball-notes.env`:
+If `~/.snowball-notes.env` exists, Snowball loads it automatically before reading `config.yaml`. Recommended for provider keys:
 
 ```bash
 export DEEPSEEK_API_KEY="..."
 export DASHSCOPE_API_KEY="..."
 ```
 
-To verify the configured provider and vector store end to end, run:
+Override the path with `SNOWBALL_ENV_FILE`. Existing exported variables take precedence.
 
-```bash
-PYTHONPATH=src python3 -m snowball_notes.cli embedding check
-PYTHONPATH=src python3 -m snowball_notes.cli embedding check --provider dashscope
-PYTHONPATH=src python3 -m snowball_notes.cli embedding check --provider voyage
+### Agent providers
+
+```yaml
+# Default: offline heuristic (no API key needed)
+agent:
+  provider: "heuristic"
+  model: "heuristic-v1"
+
+# DeepSeek tool-calling
+agent:
+  provider: "deepseek_v3"
+  model: "deepseek-chat"
+  api_key_env: "DEEPSEEK_API_KEY"
+  api_base_url: "https://api.deepseek.com/chat/completions"
+
+# OpenAI Responses
+agent:
+  provider: "openai_responses"
+  model: "gpt-5.2-codex"
 ```
 
-The check performs a real embedding call for the selected provider and then does a vector-store round trip using a temporary probe vector.
+### Embedding providers
 
-To run the review server, install the optional review dependencies first:
+```yaml
+# Default: offline local hash (no API key)
+embedding:
+  provider: "local"
 
-```bash
-pip install -e ".[review]"
+# DashScope text-embedding-v4
+embedding:
+  provider: "dashscope"
+  dashscope_model: "text-embedding-v4"
+  dashscope_dimensions: 1024
+
+# Voyage
+embedding:
+  provider: "voyage"
+  voyage_model: "voyage-3-lite"
+```
+
+### Intake modes
+
+```yaml
+intake:
+  mode: "transcript_poll"     # recursive scan with SQLite cursors
+  transcript_dir: "~/.codex/sessions"
+
+# or
+intake:
+  mode: "transcript_watch"    # in-process filesystem watch
+  transcript_dir: "~/.codex/sessions"
+
+# or
+intake:
+  mode: "cli_wrap"            # single rolling transcript file
+  cli_wrap_file: "./wrapped/current.jsonl"
+```
+
+### Vault layout
+
+Writes split by disposition:
+- Approved create/append/link actions land in `Knowledge/Atomic`
+- Flagged or manually seeded review items stay in `Inbox`
+- `reconcile` promotes older auto-approved notes from `Inbox` to `Knowledge/Atomic`
+
+### Reconcile scheduling
+
+```yaml
+reconcile:
+  enabled: true
+  run_on_startup: true
+  schedule_cron: "0 3 * * *"    # daily at 03:00 UTC
 ```
 
 ## Commands
 
-- `worker --once`: scan transcripts, enqueue events, claim one task, and run the agent once
-- `worker --forever`: continuous polling worker
-- `review list`: show pending review actions
-- `review serve [--host HOST] [--port PORT]`: start the FastAPI review server
-- `review approve <review_id> [--action create|append|archive|link] [--note-id NOTE_ID] [--title TITLE]`: generate a proposal from a pending review and commit it
-- `review mark-conflict <review_id> [--note-id NOTE_ID]`: resolve a review as a conflict without writing
-- `review discard <review_id>`: resolve a review as intentionally discarded
-- `review reject <review_id>`: mark a flagged case rejected
-- `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
-- `embedding check [--provider local|dashscope|voyage] [--vector-store sqlite_blob|sqlite_vec] [--text TEXT]`: verify provider and vector-store round-trip behavior
-- `replay <trace_id> [--mode dump|logical|live]`: dump or rerun a saved replay bundle
-- `reconcile`: audit vault-vs-DB consistency and promote legacy auto-approved notes into `Knowledge/Atomic`
-- `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
-- `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report
-- `eval report [run_id] [--baseline-run RUN_ID]`: render a stored eval report
-- `demo setup [--dest PATH]`: create an offline demo workspace with transcripts, seeded review data, and a sample eval report
-- `calibrate add-feedback <turn_id> <trustworthy|partial|bad_parse>`: record parser confidence feedback
-- `calibrate report`: summarize confidence calibration buckets and recommendations
+| Command | Description |
+|---|---|
+| `worker --once` | Scan transcripts, enqueue events, claim one task, run the agent |
+| `worker --forever` | Continuous polling worker |
+| `review list` | Show pending review actions |
+| `review serve [--host --port]` | Start the FastAPI review server |
+| `review approve <id> [--action --note-id --title]` | Approve and commit a review |
+| `review reject <id>` | Reject a flagged case |
+| `review mark-conflict <id>` | Resolve as conflict without writing |
+| `review discard <id>` | Discard a review |
+| `status [--days N]` | Print health metrics |
+| `embedding check [--provider --vector-store]` | Verify embedding round-trip |
+| `replay <trace_id> [--mode dump\|logical\|live]` | Dump or rerun a replay bundle |
+| `reconcile` | Audit vault-vs-DB consistency |
+| `eval load <path> [--replace]` | Import eval fixtures |
+| `eval run [--baseline-run ID]` | Run sandbox eval with comparable report |
+| `eval report [run_id] [--baseline-run ID]` | Render a stored eval report |
+| `demo setup [--dest PATH]` | Create offline demo workspace |
+| `calibrate add-feedback <turn_id> <label>` | Record confidence feedback |
+| `calibrate report` | Summarize calibration buckets |
 
-## Design notes
+## Project Layout
 
-This implementation follows the runtime shape from `snowball-notes-final.md`, but fixes the state handoff around commit validation. Validation happens before the `proposed_actions -> committing` transition so rejected proposal batches can move cleanly to `flagged`.
+```text
+snowball-notes/
+  src/snowball_notes/
+    agent/          # Runtime, tools, guardrails, state machine, committer, replay, trace
+    storage/        # SQLite, vault, reconcile, audit
+    eval/           # Runner, report
+    review/         # CLI, FastAPI server
+    observability/  # Metrics, health, JSONL logger
+    calibrate/      # Confidence feedback loop
+    prompts/        # System prompt versions
+  tests/            # unittest suite (runtime, guardrails, state machine, committer, replay, eval)
+  eval/fixtures/    # Annotated eval cases (25 cases, 6 decision types)
+  config.yaml
+```
+
+## Design Notes
+
+This implementation follows the runtime shape from `snowball-notes-final.md`. Commit validation happens before the `PROPOSED_ACTIONS → COMMITTING` transition so rejected proposal batches move cleanly to `FLAGGED`.

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from ..config import SnowballConfig
 from ..models import NoteMatch, SessionMemory, SessionTurn
 from ..utils import normalize_text, now_utc_iso, safe_read_text, tokenize
+
+_log = logging.getLogger(__name__)
 
 
 def load_session_memory(db, conversation_id: str) -> SessionMemory:
@@ -200,6 +203,7 @@ class SQLiteKnowledgeIndex:
                 for item in self.vector_store.search(query_vector, top_k=top_k)
             }
         except Exception:
+            _log.warning("embedding search failed, falling back to text-only retrieval", exc_info=True)
             return {}
 
     def _index_text(self, title: str, content: str, metadata: dict) -> str:

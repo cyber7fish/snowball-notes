@@ -5,8 +5,26 @@ import re
 from typing import Any
 
 from ..models import ActionProposal, ToolResult
+from ..note_cleanup import format_obsidian_link
 from ..utils import new_id, normalize_text, sha256_text, tokenize
 
+# ── Tunable constants ────────────────────────────────────────────
+MIN_ANSWER_LENGTH_FOR_NOTE = 140
+MIN_ANSWER_LENGTH_FOR_ARCHIVE = 260
+CONFIDENCE_THRESHOLD_FOR_NOTE = 0.7
+MAX_KEY_POINTS = 5
+MAX_TOPICS = 4
+MAX_TAGS = 6
+MAX_TOPIC_CANDIDATES = 6
+TITLE_PROMPT_TRUNCATION = 72
+MAX_TITLE_FROM_PROMPT = 80
+FIRST_SENTENCE_FALLBACK_LEN = 200
+MIN_SENTENCE_LENGTH_FOR_POINT = 12
+MAX_FALLBACK_KEY_POINTS = 4
+SHORT_SUMMARY_PREFIX_THRESHOLD = 32
+DEFAULT_TITLE_TRUNCATION = 64
+DEFAULT_FALLBACK_TITLE = "Snowball Notes 知识笔记"
+# ─────────────────────────────────────────────────────────────────
 
 TOOL_SCHEMAS = {
     "assess_turn_value": {"required": []},
@@ -35,6 +53,61 @@ TOOL_SCHEMAS = {
     },
 }
 
+ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9_]{4,}\b")
+ERROR_RE = re.compile(r"\b(?:[A-Za-z]+Error(?:: [^\n。！？!?]+)?)\b")
+QUESTION_MARKERS = ("?", "？", "吗", "呢")
+CONVERSATIONAL_PREFIXES = (
+    "好的",
+    "那",
+    "现在",
+    "你说的",
+    "我",
+    "怎么",
+    "如何",
+    "为什么",
+    "什么叫",
+    "在哪",
+    "能不能",
+    "是不是",
+)
+SUMMARY_LEADS = (
+    "现在的用法是",
+    "当前的用法是",
+    "当前做法是",
+    "主归属是",
+    "原因很明确",
+    "结论是",
+    "根因是",
+    "报错发生在",
+    "这说明",
+    "不是这个意思。",
+    "这是一个关于",
+    "这是关于",
+    "可以这样记",
+    "本质上是",
+    "当前默认",
+)
+PROJECT_META_MARKERS = (
+    "这一步属于哪个phase",
+    "这一步属于哪一个phase",
+    "phase归属",
+    "进行到哪步",
+    "做到哪步",
+    "做到哪了",
+    "做到哪",
+    "已完成哪些",
+    "完成了哪些",
+    "还有哪部分没做完",
+    "还有哪些没做完",
+    "还没做完",
+    "当前做到哪",
+    "当前项目状态",
+    "项目当前状态",
+    "下一步",
+    "都commit了吗",
+    "commit了吗",
+)
+
 
 def compose_atomic_note_content(extracted: dict[str, Any], event, related: list[dict[str, Any]] | None = None) -> str:
     points = extracted.get("key_points") or []
@@ -54,7 +127,7 @@ def compose_atomic_note_content(extracted: dict[str, Any], event, related: list[
     if related:
         lines.extend(["", "## Related"])
         for item in related:
-            lines.append(f"- [[{item['title']}]] ({item['note_id']})")
+            lines.append(f"- {format_obsidian_link(item['title'], item.get('vault_path'))} ({item['note_id']})")
     return "\n".join(lines).strip()
 
 
@@ -103,7 +176,7 @@ class AssessTurnValueTool(Tool):
             "代码",
             "架构",
         ]
-        is_short = len(answer) < 140
+        is_short = len(answer) < MIN_ANSWER_LENGTH_FOR_NOTE
         is_small_talk = any(token in user for token in ["thanks", "thank you", "hello", "你好", "谢谢"])
         has_signal = any(token in answer.lower() or token in user for token in technical_signals)
         decision = "note"
@@ -111,13 +184,16 @@ class AssessTurnValueTool(Tool):
         if _contains_secret_like_text(combined_text):
             decision = "skip"
             reasons = ["contains_secret_like_text"]
+        elif is_project_meta_turn(event.user_message, answer):
+            decision = "archive"
+            reasons = ["project_meta_progress_tracking"]
         elif is_small_talk or (is_short and not has_signal):
             decision = "skip"
             reasons = ["low_information_density"]
-        elif not has_signal and len(answer) < 260:
+        elif not has_signal and len(answer) < MIN_ANSWER_LENGTH_FOR_ARCHIVE:
             decision = "archive"
             reasons = ["not_reusable_enough"]
-        elif event.source_confidence < 0.7:
+        elif event.source_confidence < CONFIDENCE_THRESHOLD_FOR_NOTE:
             decision = "archive"
             reasons = ["insufficient_confidence_for_note"]
         return ToolResult.ok({"decision": decision, "reason": reasons, "confidence": event.source_confidence})
@@ -138,9 +214,9 @@ class ExtractKnowledgePointsTool(Tool):
             {
                 "candidate_title": title,
                 "summary": summary,
-                "key_points": key_points[:5],
-                "topics": topics[:4],
-                "tags": tags[:6],
+                "key_points": key_points[:MAX_KEY_POINTS],
+                "topics": topics[:MAX_TOPICS],
+                "tags": tags[:MAX_TAGS],
             }
         )
 
@@ -362,12 +438,14 @@ def _snapshot_target_note_id(
 def _guess_title(user_message: str, answer: str) -> str:
     prompt = user_message.strip().replace("\n", " ")
     prompt = re.sub(r"\s+", " ", prompt)
-    if len(prompt) > 72:
-        prompt = prompt[:72].rstrip() + "..."
+    if len(prompt) > TITLE_PROMPT_TRUNCATION:
+        prompt = prompt[:TITLE_PROMPT_TRUNCATION].rstrip() + "..."
     prompt = prompt.strip(" ??.。")
     if prompt:
-        return prompt[:80]
-    return _first_sentence(answer)[:80] or "Untitled Note"
+        if re.search(r"[A-Za-z]", prompt) and not re.search(r"[\u4e00-\u9fff]", prompt):
+            return prompt[:MAX_TITLE_FROM_PROMPT]
+        return _canonicalize_candidate_title(prompt, f"## Summary\n{_first_sentence(answer)}")
+    return _canonicalize_candidate_title(_first_sentence(answer)[:MAX_TITLE_FROM_PROMPT] or "Untitled Note")
 
 
 def _contains_secret_like_text(value: str) -> bool:
@@ -381,11 +459,18 @@ def _contains_secret_like_text(value: str) -> bool:
     return any(re.search(pattern, value) for pattern in patterns)
 
 
+def is_project_meta_turn(user_message: str, answer: str = "") -> bool:
+    combined = normalize_text(f"{user_message}\n{answer}").replace(" ", "")
+    if "phase" in combined and any(term in combined for term in ("哪个", "哪一个", "归属", "属于", "步骤")):
+        return True
+    return any(marker in combined for marker in PROJECT_META_MARKERS)
+
+
 def _first_sentence(answer: str) -> str:
     for separator in [". ", "\n", "。", "！", "!"]:
         if separator in answer:
             return answer.split(separator)[0].strip()
-    return answer.strip()[:200]
+    return answer.strip()[:FIRST_SENTENCE_FALLBACK_LEN]
 
 
 def _extract_points(answer: str) -> list[str]:
@@ -398,8 +483,8 @@ def _extract_points(answer: str) -> list[str]:
             points.append(re.sub(r"^\d+\.\s+", "", stripped))
     if points:
         return points
-    sentences = [part.strip() for part in re.split(r"[。\n]", answer) if len(part.strip()) > 12]
-    return sentences[:4]
+    sentences = [part.strip() for part in re.split(r"[。\n]", answer) if len(part.strip()) > MIN_SENTENCE_LENGTH_FOR_POINT]
+    return sentences[:MAX_FALLBACK_KEY_POINTS]
 
 
 def _guess_topics(user_message: str, answer: str) -> list[str]:
@@ -415,4 +500,98 @@ def _guess_topics(user_message: str, answer: str) -> list[str]:
     for token in candidates:
         if token not in seen:
             seen.append(token)
-    return seen[:6]
+    return seen[:MAX_TOPIC_CANDIDATES]
+
+
+def _canonicalize_candidate_title(raw_title: str, body: str = "") -> str:
+    title = _clean_title_text(raw_title)
+    if not title:
+        return DEFAULT_FALLBACK_TITLE
+    combined = f"{title}\n{body}"
+    combined_norm = normalize_text(combined)
+    mentions_snowball = "snowball-notes" in combined_norm or "snowball notes" in combined_norm
+    if not _looks_conversational_title(title):
+        return _truncate_title(title)
+    if mentions_snowball and any(term in combined for term in ("怎么用", "如何用", "如何使用")):
+        return "snowball-notes 使用方式"
+    if all(term in combined for term in ("Archive", "Inbox", "Knowledge")):
+        return "Archive、Inbox、Knowledge 目录设计与实现差异"
+    if ("模型key" in combined or "model key" in combined_norm or "真实模型" in combined or "需要 key" in combined) and mentions_snowball:
+        return "snowball-notes 命令分类与模型 key 依赖"
+    if "status" in combined_norm and any(term in combined for term in ("报错", "API key", "api key", "key")):
+        return "status 命令误触发 API key 检查"
+    error_name = _extract_error_signature(combined)
+    if error_name and any(term in combined for term in ("报错", "error", "Error", "missing", "失败")):
+        return f"{error_name} 诊断与处理"
+    env_key = _extract_env_key(combined)
+    if env_key and any(term in combined for term in ("配置", "环境变量", "env", "api key", "API key", "读取")):
+        return f"{env_key} 配置位置与读取方式"
+    summary = _extract_summary_line(body)
+    summary = _clean_summary_text(summary)
+    if summary:
+        if mentions_snowball and "snowball-notes" not in normalize_text(summary) and len(summary) <= SHORT_SUMMARY_PREFIX_THRESHOLD:
+            summary = f"snowball-notes {summary}"
+        return _truncate_title(summary)
+    return _truncate_title(title.strip("？?"))
+
+
+def _looks_conversational_title(title: str) -> bool:
+    normalized = normalize_text(title)
+    if any(marker in title for marker in QUESTION_MARKERS):
+        return True
+    if any(token in title for token in ("怎么", "如何", "为什么", "哪个", "哪一个", "什么叫", "在哪")):
+        return True
+    if title.startswith("是set") or "pyth" in normalized and "status" in normalized:
+        return True
+    return normalized.startswith(CONVERSATIONAL_PREFIXES)
+
+
+def _clean_title_text(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip(" -:：")
+    return text
+
+
+def _clean_summary_text(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    for prefix in SUMMARY_LEADS:
+        if text.startswith(prefix):
+            text = text[len(prefix) :].strip(" ：:-")
+    text = re.sub(r"^这是一篇关于", "", text).strip(" ：:-")
+    text = re.sub(r"的澄清$", "", text).strip(" ：:-")
+    return text.strip("。！？!? ")
+
+
+def _extract_summary_line(body: str) -> str:
+    match = re.search(r"^## Summary\s+(.+?)(?:\n## |\Z)", body.strip(), re.MULTILINE | re.DOTALL)
+    if match:
+        summary = match.group(1).strip()
+        first_line = next((line.strip() for line in summary.splitlines() if line.strip()), "")
+        if first_line:
+            return first_line
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "-", "*", "`")):
+            continue
+        return stripped
+    return ""
+
+
+def _extract_env_key(value: str) -> str | None:
+    for match in ENV_KEY_RE.findall(value):
+        if any(token in match for token in ("KEY", "TOKEN", "PAT", "SECRET")):
+            return match
+    return None
+
+
+def _extract_error_signature(value: str) -> str | None:
+    match = ERROR_RE.search(value)
+    if not match:
+        return None
+    return match.group(0).strip("。！？!? ")
+
+
+def _truncate_title(value: str, limit: int = DEFAULT_TITLE_TRUNCATION) -> str:
+    compact = re.sub(r"\s+", " ", value).strip(" ：:-")
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip(" ，,:：-")

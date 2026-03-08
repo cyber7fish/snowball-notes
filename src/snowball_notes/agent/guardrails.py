@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..config import SnowballConfig
 from ..models import GuardrailResult
+from .tools import is_project_meta_turn
 
 
 ACTION_TOOLS = {
@@ -11,6 +12,7 @@ ACTION_TOOLS = {
     "propose_link_notes",
 }
 NOTE_CREATION_TOOLS = {"propose_create_note"}
+NOTE_MUTATION_TOOLS = {"propose_create_note", "propose_append_to_note", "propose_link_notes"}
 
 
 def check_guardrail(config: SnowballConfig, state, tool_name: str) -> GuardrailResult:
@@ -23,6 +25,11 @@ def check_guardrail(config: SnowballConfig, state, tool_name: str) -> GuardrailR
         return GuardrailResult.block(
             f"source_confidence={event.source_confidence} < {config.guardrails.min_confidence_for_note}"
         )
+    if tool_name in NOTE_MUTATION_TOOLS and is_project_meta_turn(
+        event.user_message,
+        event.assistant_final_answer,
+    ):
+        return GuardrailResult.block("project_meta_turn_not_durable_note")
     if tool_name == "propose_append_to_note":
         if state.append_count >= config.agent.max_appends_per_run:
             return GuardrailResult.block(

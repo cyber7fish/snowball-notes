@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -300,7 +301,12 @@ class Database:
             (session_file,),
         )
 
+    _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def save_json_row(self, table: str, payload: dict[str, Any]) -> None:
+        for name in [table, *payload.keys()]:
+            if not self._IDENTIFIER_RE.match(name):
+                raise ValueError(f"unsafe SQL identifier: {name!r}")
         keys = list(payload.keys())
         placeholders = ", ".join("?" for _ in keys)
         columns = ", ".join(keys)

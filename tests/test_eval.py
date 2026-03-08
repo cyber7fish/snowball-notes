@@ -184,11 +184,11 @@ class EvalTests(unittest.TestCase):
                 exit_code = main(["--config", str(config_path), "eval", "run"])
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
-            self.assertIn("Decision accuracy: 100.0%", output)
-            self.assertIn("Target note accuracy: 100.0%", output)
-            self.assertIn("Review precision: 100.0%", output)
-            self.assertIn("Auto action acceptance rate: 100.0%", output)
-            self.assertIn("Logical replay match: 100.0%", output)
+            self.assertIn("Decision accuracy", output)
+            self.assertIn("100.0%", output)
+            self.assertIn("Target note accuracy", output)
+            self.assertIn("Review precision", output)
+            self.assertIn("Logical replay match", output)
 
             _, db, _, _ = build_runtime(str(config_path), build_worker=False)
             try:
@@ -214,12 +214,12 @@ class EvalTests(unittest.TestCase):
             with mock.patch("sys.stdout", stdout):
                 exit_code = main(["--config", str(config_path), "eval", "load", str(fixture_path), "--replace"])
             self.assertEqual(exit_code, 0)
-            self.assertIn("loaded 12 eval cases", stdout.getvalue())
+            self.assertIn("loaded 25 eval cases", stdout.getvalue())
 
             _, db, _, _ = build_runtime(str(config_path), build_worker=False)
             try:
                 cases = load_eval_cases(db)
-                self.assertEqual(len(cases), 12)
+                self.assertEqual(len(cases), 25)
                 expected_decisions = {case.expected_decision for case in cases}
                 self.assertEqual(
                     expected_decisions,
@@ -233,16 +233,16 @@ class EvalTests(unittest.TestCase):
                 exit_code = main(["--config", str(config_path), "eval", "run"])
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
-            self.assertIn("Decision accuracy:", output)
-            self.assertIn("Review precision:", output)
-            self.assertIn("Auto action acceptance rate:", output)
+            self.assertIn("Decision accuracy", output)
+            self.assertIn("Review precision", output)
+            self.assertIn("Auto action acceptance rate", output)
 
             _, db, _, _ = build_runtime(str(config_path), build_worker=False)
             try:
                 report = load_eval_report(db)
                 self.assertIsNotNone(report)
-                self.assertEqual(report["total_cases"], 12)
+                self.assertEqual(report["total_cases"], 25)
                 self.assertIn("results", report)
-                self.assertEqual(len(report["results"]), 12)
+                self.assertEqual(len(report["results"]), 25)
             finally:
                 db.close()

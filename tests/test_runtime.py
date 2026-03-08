@@ -312,6 +312,47 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_worker_archives_project_meta_turn_without_creating_note(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts)
+            _write_transcript(
+                transcripts / "session.jsonl",
+                "可以告诉我现在这个项目进行到哪步了吗？和 snowball-notes-final.md 设计的还有哪部分没做完",
+                (
+                    "Phase 1 和 Phase 2 的主干已经完成，Phase 3 的 eval 和 Phase 4 的 review UI 刚补齐。"
+                    "剩下的主要差距是 embedding provider 联调、更完整的 eval dataset，以及一些 demo 和文档打磨。"
+                    "这个回答属于项目进度同步，不应该沉淀成长期知识 note。"
+                ),
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "completed")
+                trace = db.fetchone(
+                    """
+                    SELECT final_decision
+                    FROM agent_traces
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(trace["final_decision"], "archive_turn")
+                note_count = db.fetchone(
+                    "SELECT COUNT(*) AS count FROM notes WHERE note_type = 'atomic' AND status != 'deleted'"
+                )
+                self.assertEqual(note_count["count"], 0)
+                archive_count = db.fetchone(
+                    "SELECT COUNT(*) AS count FROM notes WHERE note_type = 'archive' AND status != 'deleted'"
+                )
+                self.assertEqual(archive_count["count"], 1)
+            finally:
+                db.close()
+
     def test_worker_appends_to_existing_note(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -937,6 +978,38 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(promoted_path.exists())
                 promoted_text = promoted_path.read_text(encoding="utf-8")
                 self.assertIn('status: "approved"', promoted_text)
+            finally:
+                db.close()
+
+    def test_reconcile_reports_missing_file_without_crashing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts, reconcile_run_on_startup=False)
+            config, db, vault, _ = build_runtime(str(config_path), build_worker=False)
+            try:
+                missing_path = root / "vault" / "Archive" / "Conversations" / "Conversation 019cb98c.md"
+                db.execute(
+                    """
+                    INSERT INTO notes (note_id, note_type, title, vault_path, content_hash, status, metadata_json, created_at, updated_at)
+                    VALUES (?, 'archive', ?, ?, ?, 'archived', '{}', '2026-03-07T00:00:00+00:00', '2026-03-07T00:00:00+00:00')
+                    """,
+                    (
+                        "note_missing_archive",
+                        "Conversation 019cb98c",
+                        str(missing_path.resolve()),
+                        "missing",
+                    ),
+                )
+                db.commit()
+
+                stdout = io.StringIO()
+                with mock.patch("sys.stdout", stdout):
+                    exit_code = main(["--config", str(config_path), "reconcile"])
+                self.assertEqual(exit_code, 0)
+                self.assertIn(str(missing_path.resolve()), stdout.getvalue())
             finally:
                 db.close()
 

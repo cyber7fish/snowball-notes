@@ -25,8 +25,8 @@ class DemoSetupTests(unittest.TestCase):
             self.assertTrue((dest / "eval" / "fixtures" / "sample_cases.json").exists())
             report_path = dest / "reports" / "sample_eval_report.txt"
             self.assertTrue(report_path.exists())
-            self.assertIn("Decision accuracy:", report_path.read_text(encoding="utf-8"))
-            self.assertIn("Review precision:", report_path.read_text(encoding="utf-8"))
+            self.assertIn("Decision accuracy", report_path.read_text(encoding="utf-8"))
+            self.assertIn("Review precision", report_path.read_text(encoding="utf-8"))
 
             config = load_config(dest / "config.yaml")
             db = Database(config.db_path)
@@ -50,6 +50,6 @@ class DemoSetupTests(unittest.TestCase):
                 report = load_eval_report(db)
                 self.assertIsNotNone(report)
                 assert report is not None
-                self.assertEqual(report["total_cases"], 12)
+                self.assertEqual(report["total_cases"], 25)
             finally:
                 db.close()

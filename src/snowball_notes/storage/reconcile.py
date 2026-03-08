@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ..models import ReconcileReport
 from .audit import write_audit_log
@@ -9,6 +10,7 @@ from .audit import write_audit_log
 def reconcile_vault_and_db(vault, db) -> ReconcileReport:
     promoted_count = promote_auto_approved_notes(vault, db)
     normalized_count = normalize_note_files(vault, db)
+    normalized_count += normalize_note_links(vault, db)
     vault_files = {
         str(path.resolve())
         for path in vault.root.rglob("*.md")
@@ -93,6 +95,9 @@ def normalize_note_files(vault, db) -> int:
     )
     normalized = 0
     for row in rows:
+        note_path = Path(row["vault_path"])
+        if not note_path.exists():
+            continue
         source_rows = db.fetchall(
             """
             SELECT event_id
@@ -102,7 +107,7 @@ def normalize_note_files(vault, db) -> int:
             """,
             (row["note_id"],),
         )
-        changed, content_hash = vault.normalize_note_file(
+        changed, content_hash, _, normalized_path = vault.normalize_note_file(
             note_type=row["note_type"],
             note_id=row["note_id"],
             title=row["title"],
@@ -116,14 +121,36 @@ def normalize_note_files(vault, db) -> int:
         if not changed:
             continue
         db.execute(
-            "UPDATE notes SET content_hash = ? WHERE note_id = ?",
-            (content_hash, row["note_id"]),
+            """
+            UPDATE notes
+            SET vault_path = ?, content_hash = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE note_id = ?
+            """,
+            (str(normalized_path.resolve()), content_hash, row["note_id"]),
         )
         normalized += 1
     if normalized:
         write_audit_log(
             db,
             "note_files_normalized",
+            {"count": normalized},
+        )
+    return normalized
+
+
+def normalize_note_links(vault, db) -> int:
+    rows = db.fetchall(
+        """
+        SELECT title, vault_path
+        FROM notes
+        WHERE status != 'deleted'
+        """
+    )
+    normalized = vault.normalize_link_targets(rows)
+    if normalized:
+        write_audit_log(
+            db,
+            "note_links_normalized",
             {"count": normalized},
         )
     return normalized
