@@ -473,6 +473,7 @@ class SessionMemory:
 class ReconcileReport:
     orphan_files: list[str] = field(default_factory=list)
     missing_files: list[str] = field(default_factory=list)
+    promoted_auto_approved: int = 0
 
     def ok(self) -> bool:
         return not self.orphan_files and not self.missing_files

@@ -88,6 +88,7 @@ class AssessTurnValueTool(Tool):
         event = state.event
         answer = event.assistant_final_answer.strip()
         user = event.user_message.strip().lower()
+        combined_text = f"{event.user_message}\n{event.assistant_final_answer}"
         technical_signals = [
             "error",
             "debug",
@@ -107,7 +108,10 @@ class AssessTurnValueTool(Tool):
         has_signal = any(token in answer.lower() or token in user for token in technical_signals)
         decision = "note"
         reasons = ["long_term_value"]
-        if is_small_talk or (is_short and not has_signal):
+        if _contains_secret_like_text(combined_text):
+            decision = "skip"
+            reasons = ["contains_secret_like_text"]
+        elif is_small_talk or (is_short and not has_signal):
             decision = "skip"
             reasons = ["low_information_density"]
         elif not has_signal and len(answer) < 260:
@@ -364,6 +368,17 @@ def _guess_title(user_message: str, answer: str) -> str:
     if prompt:
         return prompt[:80]
     return _first_sentence(answer)[:80] or "Untitled Note"
+
+
+def _contains_secret_like_text(value: str) -> bool:
+    patterns = [
+        r"github_pat_[A-Za-z0-9_]{20,}",
+        r"\bghp_[A-Za-z0-9]{20,}\b",
+        r"\bsk-[A-Za-z0-9]{16,}\b",
+        r"\bAKIA[0-9A-Z]{16}\b",
+        r"\bAIza[0-9A-Za-z\-_]{20,}\b",
+    ]
+    return any(re.search(pattern, value) for pattern in patterns)
 
 
 def _first_sentence(answer: str) -> str:

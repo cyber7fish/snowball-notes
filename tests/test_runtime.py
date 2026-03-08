@@ -302,6 +302,9 @@ class RuntimeTests(unittest.TestCase):
                 note_rows = db.fetchall("SELECT note_id, vault_path FROM notes WHERE note_type = 'atomic'")
                 self.assertEqual(len(note_rows), 1)
                 self.assertTrue(Path(note_rows[0]["vault_path"]).exists())
+                self.assertIn("Knowledge/Atomic", note_rows[0]["vault_path"])
+                note_status = db.fetchone("SELECT status FROM notes WHERE note_id = ?", (note_rows[0]["note_id"],))
+                self.assertEqual(note_status["status"], "approved")
                 trace_rows = db.fetchall("SELECT trace_id FROM agent_traces")
                 replay_rows = db.fetchall("SELECT trace_id FROM replay_bundles")
                 self.assertEqual(len(trace_rows), 1)
@@ -333,6 +336,7 @@ class RuntimeTests(unittest.TestCase):
                     tags=["agent"],
                     topics=["runtime"],
                     source_event_ids=["evt_seed"],
+                    status="approved",
                 )
                 db.execute(
                     """
@@ -382,6 +386,7 @@ class RuntimeTests(unittest.TestCase):
                     tags=["agent"],
                     topics=["runtime"],
                     source_event_ids=["evt_seed"],
+                    status="approved",
                 )
                 db.execute(
                     """
@@ -638,6 +643,7 @@ class RuntimeTests(unittest.TestCase):
                     tags=["agent"],
                     topics=["runtime"],
                     source_event_ids=["evt_seed"],
+                    status="approved",
                 )
                 db.execute(
                     """
@@ -832,6 +838,104 @@ class RuntimeTests(unittest.TestCase):
                 self.assertGreater(repaired["source_confidence"], 0.8)
                 task_count = db.fetchone("SELECT COUNT(*) AS count FROM tasks")
                 self.assertEqual(task_count["count"], 1)
+            finally:
+                db.close()
+
+    def test_reconcile_promotes_auto_approved_notes_from_inbox_to_knowledge(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts, reconcile_run_on_startup=False)
+            config, db, vault, _ = build_runtime(str(config_path), build_worker=False)
+            try:
+                legacy_path, content_hash = vault.write_new_note(
+                    note_id="note_legacy",
+                    title="Legacy Auto Approved Note",
+                    content="## Summary\nThis note should be promoted out of Inbox.",
+                    tags=["agent"],
+                    topics=["runtime"],
+                    source_event_ids=["evt_legacy"],
+                    status="pending_review",
+                )
+                db.execute(
+                    """
+                    INSERT INTO notes (note_id, note_type, title, vault_path, content_hash, status, metadata_json, created_at, updated_at)
+                    VALUES (?, 'atomic', ?, ?, ?, 'pending_review', '{}', '2026-03-07T00:00:00+00:00', '2026-03-07T00:00:00+00:00')
+                    """,
+                    (
+                        "note_legacy",
+                        "Legacy Auto Approved Note",
+                        str(legacy_path.resolve()),
+                        content_hash,
+                    ),
+                )
+                db.execute(
+                    """
+                    INSERT INTO agent_traces (
+                      trace_id, turn_id, event_id, prompt_version, model_name, started_at, finished_at,
+                      total_steps, exceeded_max_steps, terminal_reason, final_decision, final_confidence,
+                      total_input_tokens, total_output_tokens, total_duration_ms, trace_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "trace_legacy",
+                        "turn_legacy",
+                        "evt_legacy",
+                        "agent_system/v1.md",
+                        "heuristic-v1",
+                        "2026-03-07T00:00:00+00:00",
+                        "2026-03-07T00:00:01+00:00",
+                        3,
+                        0,
+                        "completed",
+                        "create_note",
+                        0.92,
+                        120,
+                        40,
+                        240,
+                        "{}",
+                    ),
+                )
+                db.execute(
+                    """
+                    INSERT INTO action_proposals (
+                      proposal_id, trace_id, turn_id, action_type, target_note_id, payload_json,
+                      idempotency_key, status, created_at, committed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "proposal_legacy",
+                        "trace_legacy",
+                        "turn_legacy",
+                        "create_note",
+                        "note_legacy",
+                        "{}",
+                        "legacy:create:note_legacy",
+                        "committed",
+                        "2026-03-07T00:00:00+00:00",
+                        "2026-03-07T00:00:01+00:00",
+                    ),
+                )
+                db.commit()
+
+                stdout = io.StringIO()
+                with mock.patch("sys.stdout", stdout):
+                    exit_code = main(["--config", str(config_path), "reconcile"])
+                self.assertEqual(exit_code, 0)
+                self.assertIn("\"promoted_auto_approved\": 1", stdout.getvalue())
+
+                note_row = db.fetchone(
+                    "SELECT status, vault_path FROM notes WHERE note_id = 'note_legacy'"
+                )
+                self.assertEqual(note_row["status"], "approved")
+                self.assertIn("Knowledge/Atomic", note_row["vault_path"])
+                self.assertFalse(legacy_path.exists())
+                promoted_path = Path(note_row["vault_path"])
+                self.assertTrue(promoted_path.exists())
+                promoted_text = promoted_path.read_text(encoding="utf-8")
+                self.assertIn("status: approved", promoted_text)
             finally:
                 db.close()
 

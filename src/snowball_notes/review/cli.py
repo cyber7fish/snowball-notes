@@ -485,14 +485,18 @@ def _finalize_approved_review(
             note_title = note_row["title"]
             related_note_ids.append(note_row["note_id"])
             if action_type in {"create_note", "append_note"}:
-                content_hash = vault.update_note_status(note_row["vault_path"], "approved")
+                promoted_path, content_hash = vault.promote_note_to_atomic(
+                    note_row["note_id"],
+                    note_row["title"],
+                    note_row["vault_path"],
+                )
                 db.execute(
                     """
                     UPDATE notes
-                    SET status = 'approved', content_hash = ?, updated_at = ?
+                    SET status = 'approved', vault_path = ?, content_hash = ?, updated_at = ?
                     WHERE note_id = ?
                     """,
-                    (content_hash, now_utc_iso(), committed_note_id),
+                    (str(promoted_path.resolve()), content_hash, now_utc_iso(), committed_note_id),
                 )
     if action_type == "link_notes":
         source_note_id = review_row.get("final_target_note_id") or _suggested_target_note_id(review_row)
@@ -506,14 +510,18 @@ def _finalize_approved_review(
             )
             if note_row is None:
                 continue
-            content_hash = vault.update_note_status(note_row["vault_path"], "approved")
+            promoted_path, content_hash = vault.promote_note_to_atomic(
+                note_row["note_id"],
+                note_row["title"],
+                note_row["vault_path"],
+            )
             db.execute(
                 """
                 UPDATE notes
-                SET status = 'approved', content_hash = ?, updated_at = ?
+                SET status = 'approved', vault_path = ?, content_hash = ?, updated_at = ?
                 WHERE note_id = ?
                 """,
-                (content_hash, now_utc_iso(), note_id),
+                (str(promoted_path.resolve()), content_hash, now_utc_iso(), note_id),
             )
             related_note_ids.append(note_id)
     db.execute(

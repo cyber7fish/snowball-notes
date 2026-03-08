@@ -98,12 +98,13 @@ class Committer:
                 tags=payload.get("tags", []),
                 topics=payload.get("topics", []),
                 source_event_ids=[payload["source_event_id"]],
+                status="approved",
             )
             metadata = {"tags": payload.get("tags", []), "topics": payload.get("topics", [])}
             self.db.execute(
                 """
                 INSERT INTO notes (note_id, note_type, title, vault_path, content_hash, status, metadata_json, created_at, updated_at)
-                VALUES (?, 'atomic', ?, ?, ?, 'pending_review', ?, ?, ?)
+                VALUES (?, 'atomic', ?, ?, ?, 'approved', ?, ?, ?)
                 """,
                 (
                     note_id,
@@ -129,16 +130,21 @@ class Committer:
             if row is None:
                 raise RuntimeError(f"missing note {proposal.target_note_id}")
             note_path = Path(row["vault_path"])
-            content_hash = self.vault.append_to_updates_section(
+            self.vault.append_to_updates_section(
                 note_path, payload["content"], payload["source_turn_id"]
+            )
+            promoted_path, content_hash = self.vault.promote_note_to_atomic(
+                proposal.target_note_id,
+                row["title"],
+                note_path,
             )
             self.db.execute(
                 """
                 UPDATE notes
-                SET content_hash = ?, updated_at = ?, status = 'pending_review'
+                SET vault_path = ?, content_hash = ?, updated_at = ?, status = 'approved'
                 WHERE note_id = ?
                 """,
-                (content_hash, now_utc_iso(), proposal.target_note_id),
+                (str(promoted_path.resolve()), content_hash, now_utc_iso(), proposal.target_note_id),
             )
             self.db.execute(
                 "INSERT OR IGNORE INTO note_sources (note_id, event_id, relation_type) VALUES (?, ?, 'appended_from')",
@@ -166,22 +172,32 @@ class Committer:
                 target_row["vault_path"],
                 target_row["title"],
             )
+            source_path, source_hash = self.vault.promote_note_to_atomic(
+                source_note_id,
+                source_row["title"],
+                source_row["vault_path"],
+            )
+            target_path, target_hash = self.vault.promote_note_to_atomic(
+                target_note_id,
+                target_row["title"],
+                target_row["vault_path"],
+            )
             timestamp = now_utc_iso()
             self.db.execute(
                 """
                 UPDATE notes
-                SET content_hash = ?, updated_at = ?, status = 'pending_review'
+                SET vault_path = ?, content_hash = ?, updated_at = ?, status = 'approved'
                 WHERE note_id = ?
                 """,
-                (source_hash, timestamp, source_note_id),
+                (str(source_path.resolve()), source_hash, timestamp, source_note_id),
             )
             self.db.execute(
                 """
                 UPDATE notes
-                SET content_hash = ?, updated_at = ?, status = 'pending_review'
+                SET vault_path = ?, content_hash = ?, updated_at = ?, status = 'approved'
                 WHERE note_id = ?
                 """,
-                (target_hash, timestamp, target_note_id),
+                (str(target_path.resolve()), target_hash, timestamp, target_note_id),
             )
             self.db.execute(
                 "INSERT OR IGNORE INTO note_sources (note_id, event_id, relation_type) VALUES (?, ?, 'linked_from')",

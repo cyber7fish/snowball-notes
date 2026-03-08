@@ -140,7 +140,7 @@ class LinkNotesTests(unittest.TestCase):
                 status_rows = db.fetchall(
                     "SELECT note_id, status FROM notes WHERE note_id IN ('note_source', 'note_target') ORDER BY note_id ASC"
                 )
-                self.assertEqual([row["status"] for row in status_rows], ["pending_review", "pending_review"])
+                self.assertEqual([row["status"] for row in status_rows], ["approved", "approved"])
                 source_count = db.fetchone(
                     """
                     SELECT COUNT(*) AS count

@@ -3,8 +3,9 @@ import unittest
 from pathlib import Path
 
 from snowball_notes.agent.memory import SQLiteKnowledgeIndex
+from snowball_notes.agent.state import AgentState
 from snowball_notes.agent.runtime import SnowballAgent
-from snowball_notes.agent.tools import build_tool_registry
+from snowball_notes.agent.tools import AssessTurnValueTool, build_tool_registry
 from snowball_notes.config import default_config
 from snowball_notes.models import ModelResponse, RunState, SessionMemory, StandardEvent, TaskRecord, TokenUsage, ToolCall
 from snowball_notes.storage.sqlite import Database
@@ -84,6 +85,31 @@ class ReactLoopTests(unittest.TestCase):
             trace = db.fetchone("SELECT final_decision FROM agent_traces WHERE trace_id IS NOT NULL LIMIT 1")
             self.assertEqual(trace["final_decision"], "skip")
             db.close()
+
+    def test_assess_turn_skips_secret_like_content(self):
+        event = StandardEvent(
+            event_id="evt_secret",
+            session_file="/tmp/session.jsonl",
+            conversation_id="conv_secret",
+            turn_id="turn_secret",
+            user_message="github_pat_11B6J7PKY0abcdefghijklmnop 这是 token，帮我配一下",
+            assistant_final_answer="我会把这个 token 写到本地配置里。",
+            displayed_at="2026-03-08T00:00:00+00:00",
+            source_completeness="full",
+            source_confidence=0.95,
+            parser_version="v1",
+            context_meta={},
+        )
+        state = AgentState(
+            event=event,
+            task_id="task_secret",
+            trace_id="trace_secret",
+            session_memory=SessionMemory(conversation_id=event.conversation_id),
+        )
+        result = AssessTurnValueTool().execute({}, state)
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["decision"], "skip")
+        self.assertEqual(result.data["reason"], ["contains_secret_like_text"])
 
 
 if __name__ == "__main__":

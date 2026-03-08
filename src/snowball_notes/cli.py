@@ -214,8 +214,18 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(outcome.to_dict(), ensure_ascii=False, indent=2))
             return 0
         if args.command == "reconcile":
-            report = reconcile_vault_and_db(vault.root, db)
-            print(json.dumps({"orphan_files": report.orphan_files, "missing_files": report.missing_files}, ensure_ascii=False, indent=2))
+            report = reconcile_vault_and_db(vault, db)
+            print(
+                json.dumps(
+                    {
+                        "orphan_files": report.orphan_files,
+                        "missing_files": report.missing_files,
+                        "promoted_auto_approved": report.promoted_auto_approved,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
         if args.command == "embedding":
             if args.embedding_command == "check":

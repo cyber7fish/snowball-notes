@@ -78,7 +78,7 @@ class SnowballWorker:
 
     def _run_reconcile(self, trigger: str) -> None:
         try:
-            reconcile_vault_and_db(self.vault.root, self.db)
+            reconcile_vault_and_db(self.vault, self.db)
             self._last_reconcile_at = now_utc()
             self.db.commit()
         except Exception as exc:  # pragma: no cover - defensive

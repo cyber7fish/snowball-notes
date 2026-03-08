@@ -30,7 +30,7 @@ class Vault:
         source_event_ids: list[str] | None = None,
         status: str = "pending_review",
     ) -> tuple[Path, str]:
-        path = self.inbox_dir / f"{slugify(title)}-{note_id[-6:]}.md"
+        path = self.note_path(note_id, title, status=status)
         frontmatter = self._frontmatter(
             {
                 "id": note_id,
@@ -47,6 +47,10 @@ class Vault:
         full_content = f"{frontmatter}\n\n# {title}\n\n{content.strip()}\n"
         write_atomic_text(path, full_content)
         return path, sha256_text(full_content)
+
+    def note_path(self, note_id: str, title: str, *, status: str = "pending_review") -> Path:
+        base_dir = self.atomic_dir if status == "approved" else self.inbox_dir
+        return base_dir / f"{slugify(title)}-{note_id[-6:]}.md"
 
     def write_archive_note(self, note_id: str, payload: dict[str, Any]) -> tuple[Path, str]:
         title = payload["title"]
@@ -131,6 +135,15 @@ class Vault:
             rendered += "\n"
         write_atomic_text(path, rendered)
         return sha256_text(rendered)
+
+    def promote_note_to_atomic(self, note_id: str, title: str, note_path: str | Path) -> tuple[Path, str]:
+        source_path = Path(note_path)
+        target_path = self.note_path(note_id, title, status="approved")
+        if source_path.resolve() != target_path.resolve():
+            ensure_directory(target_path.parent)
+            source_path.replace(target_path)
+        content_hash = self.update_note_status(target_path, "approved")
+        return target_path, content_hash
 
     def _ensure_links_section_entry(self, note_path: Path, linked_title: str) -> str:
         existing = safe_read_text(note_path)

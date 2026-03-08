@@ -45,6 +45,12 @@ The default configuration writes runtime data under `./data`, logs under `./logs
 
 If `~/.snowball-notes.env` exists, Snowball loads it automatically before reading `config.yaml`. This is the recommended place to keep provider keys such as `DEEPSEEK_API_KEY` and `DASHSCOPE_API_KEY`. Existing exported environment variables still win, and you can override the file path with `SNOWBALL_ENV_FILE`.
 
+Automatic writes now split by disposition:
+
+- approved create/append/link actions land in `Knowledge/Atomic`
+- `flagged` or manually seeded review items stay in `Inbox`
+- `reconcile` also repairs older auto-approved notes that were previously stranded in `Inbox`
+
 ## Demo workspace
 
 If you want a repo-local demo without Codex transcripts, generate a sandbox workspace:
@@ -178,6 +184,7 @@ pip install -e ".[review]"
 - `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
 - `embedding check [--provider local|dashscope|voyage] [--vector-store sqlite_blob|sqlite_vec] [--text TEXT]`: verify provider and vector-store round-trip behavior
 - `replay <trace_id> [--mode dump|logical|live]`: dump or rerun a saved replay bundle
+- `reconcile`: audit vault-vs-DB consistency and promote legacy auto-approved notes into `Knowledge/Atomic`
 - `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
 - `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report
 - `eval report [run_id] [--baseline-run RUN_ID]`: render a stored eval report
