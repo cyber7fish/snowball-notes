@@ -1,9 +1,11 @@
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from snowball_notes.cli import build_runtime
+from snowball_notes.cli import build_runtime, main
 from snowball_notes.review.cli import approve_review
 
 
@@ -154,6 +156,23 @@ def _write_current_transcript(
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_status_command_does_not_require_model_api_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts)
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8").replace('  model: "heuristic-v1"', '  provider: "deepseek_v3"\n  model: "deepseek-chat"'),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with mock.patch("sys.stdout", stdout):
+                exit_code = main(["--config", str(config_path), "status"])
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Snowball Status", stdout.getvalue())
+
     def test_worker_runs_startup_reconcile_once(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

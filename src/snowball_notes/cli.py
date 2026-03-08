@@ -23,16 +23,18 @@ from .storage.sqlite import Database
 from .storage.vault import Vault
 
 
-def build_runtime(config_path: str | None = None):
+def build_runtime(config_path: str | None = None, *, build_worker: bool = True):
     config = load_config(config_path)
     db = Database(config.db_path)
     db.migrate()
     vault = Vault(config)
-    knowledge_index = SQLiteKnowledgeIndex(db)
-    tools = build_tool_registry(db, knowledge_index)
-    adapter = build_model_adapter(config)
-    agent = SnowballAgent(config, adapter, tools, vault, db)
-    worker = SnowballWorker(config, db, agent, vault)
+    worker = None
+    if build_worker:
+        knowledge_index = SQLiteKnowledgeIndex(db)
+        tools = build_tool_registry(db, knowledge_index)
+        adapter = build_model_adapter(config)
+        agent = SnowballAgent(config, adapter, tools, vault, db)
+        worker = SnowballWorker(config, db, agent, vault)
     return config, db, vault, worker
 
 
@@ -72,9 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     calibrate_subparsers.add_parser("report")
 
     args = parser.parse_args(argv)
-    config, db, vault, worker = build_runtime(args.config_path)
+    config, db, vault, worker = build_runtime(args.config_path, build_worker=args.command == "worker")
     try:
         if args.command == "worker":
+            if worker is None:
+                print("worker runtime unavailable", file=sys.stderr)
+                return 1
             if args.forever:
                 worker.run_forever()
                 return 0
