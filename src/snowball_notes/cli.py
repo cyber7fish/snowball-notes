@@ -221,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
                         "orphan_files": report.orphan_files,
                         "missing_files": report.missing_files,
                         "promoted_auto_approved": report.promoted_auto_approved,
+                        "normalized_note_files": report.normalized_note_files,
                     },
                     ensure_ascii=False,
                     indent=2,

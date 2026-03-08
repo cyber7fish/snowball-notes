@@ -604,7 +604,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(note_row["status"], "approved")
                 updated = existing_path.read_text(encoding="utf-8")
                 self.assertIn("## Updates", updated)
-                self.assertIn("status: approved", updated)
+                self.assertIn('status: "approved"', updated)
 
                 memory_row = db.fetchone(
                     """
@@ -925,6 +925,7 @@ class RuntimeTests(unittest.TestCase):
                     exit_code = main(["--config", str(config_path), "reconcile"])
                 self.assertEqual(exit_code, 0)
                 self.assertIn("\"promoted_auto_approved\": 1", stdout.getvalue())
+                self.assertIn("\"normalized_note_files\": 1", stdout.getvalue())
 
                 note_row = db.fetchone(
                     "SELECT status, vault_path FROM notes WHERE note_id = 'note_legacy'"
@@ -935,7 +936,32 @@ class RuntimeTests(unittest.TestCase):
                 promoted_path = Path(note_row["vault_path"])
                 self.assertTrue(promoted_path.exists())
                 promoted_text = promoted_path.read_text(encoding="utf-8")
-                self.assertIn("status: approved", promoted_text)
+                self.assertIn('status: "approved"', promoted_text)
+            finally:
+                db.close()
+
+    def test_vault_quotes_frontmatter_and_removes_duplicate_title_heading(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts, reconcile_run_on_startup=False)
+            config, db, vault, _ = build_runtime(str(config_path), build_worker=False)
+            try:
+                title = "RuntimeError: missing API key env: DEEPSEEK_API_KEY 为什么报错了"
+                path, _ = vault.write_new_note(
+                    note_id="note_frontmatter",
+                    title=title,
+                    content=f"# {title}\n\n## Summary\nKeep keys out of notes.\n",
+                    tags=["debug"],
+                    topics=["secrets"],
+                    source_event_ids=["evt_frontmatter"],
+                    status="approved",
+                )
+                rendered = path.read_text(encoding="utf-8")
+                self.assertIn(f'title: "{title}"', rendered)
+                self.assertEqual(rendered.count(f"# {title}"), 1)
             finally:
                 db.close()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,8 @@ class Vault:
                 "status": status,
             }
         )
-        full_content = f"{frontmatter}\n\n# {title}\n\n{content.strip()}\n"
+        body = self._normalize_atomic_body(title, content)
+        full_content = f"{frontmatter}\n\n# {title}\n\n{body}\n"
         write_atomic_text(path, full_content)
         return path, sha256_text(full_content)
 
@@ -118,18 +120,18 @@ class Vault:
         timestamp_seen = False
         for line in frontmatter:
             if line.startswith("status:"):
-                updated.append(f"status: {status}")
+                updated.append(f"status: {self._yaml_scalar(status)}")
                 status_seen = True
                 continue
             if line.startswith("updated_at:"):
-                updated.append(f"updated_at: {now_utc_iso()}")
+                updated.append(f"updated_at: {self._yaml_scalar(now_utc_iso())}")
                 timestamp_seen = True
                 continue
             updated.append(line)
         if not status_seen:
-            updated.append(f"status: {status}")
+            updated.append(f"status: {self._yaml_scalar(status)}")
         if not timestamp_seen:
-            updated.append(f"updated_at: {now_utc_iso()}")
+            updated.append(f"updated_at: {self._yaml_scalar(now_utc_iso())}")
         rendered = "\n".join(["---", *updated, "---", *lines[end_index + 1 :]])
         if existing.endswith("\n"):
             rendered += "\n"
@@ -164,8 +166,87 @@ class Vault:
             if isinstance(value, list):
                 lines.append(f"{key}:")
                 for item in value:
-                    lines.append(f"  - {item}")
+                    lines.append(f"  - {self._yaml_scalar(item)}")
             else:
-                lines.append(f"{key}: {value}")
+                lines.append(f"{key}: {self._yaml_scalar(value)}")
         lines.append("---")
         return "\n".join(lines)
+
+    def normalize_note_file(
+        self,
+        *,
+        note_type: str,
+        note_id: str,
+        title: str,
+        note_path: str | Path,
+        status: str,
+        metadata: dict[str, Any],
+        source_event_ids: list[str],
+        created_at: str,
+        updated_at: str,
+    ) -> tuple[bool, str]:
+        path = Path(note_path)
+        existing = safe_read_text(path)
+        if note_type == "atomic":
+            frontmatter = self._frontmatter(
+                {
+                    "id": note_id,
+                    "type": note_type,
+                    "title": title,
+                    "tags": metadata.get("tags", []),
+                    "topics": metadata.get("topics", []),
+                    "source_event_ids": source_event_ids,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "status": status,
+                }
+            )
+            body = self._normalize_atomic_body(title, self._body_without_frontmatter(existing))
+            rendered = f"{frontmatter}\n\n# {title}\n\n{body}\n"
+        else:
+            frontmatter = self._frontmatter(
+                {
+                    "id": note_id,
+                    "type": note_type,
+                    "title": title,
+                    "source_event_ids": source_event_ids,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "status": status,
+                }
+            )
+            body = self._body_without_frontmatter(existing).strip()
+            rendered = f"{frontmatter}\n\n{body}\n"
+        if rendered == existing:
+            return False, sha256_text(existing)
+        write_atomic_text(path, rendered)
+        return True, sha256_text(rendered)
+
+    def _normalize_atomic_body(self, title: str, content: str) -> str:
+        body = content.strip()
+        title_line = f"# {title}".strip()
+        while body.startswith(title_line):
+            remainder = body[len(title_line) :].lstrip()
+            if remainder == body:
+                break
+            body = remainder
+        return body or "## Summary\nNo durable summary captured yet."
+
+    def _body_without_frontmatter(self, content: str) -> str:
+        if not content.startswith("---\n"):
+            return content.strip()
+        lines = content.splitlines()
+        try:
+            end_index = lines.index("---", 1)
+        except ValueError:
+            return content.strip()
+        return "\n".join(lines[end_index + 1 :]).strip()
+
+    def _yaml_scalar(self, value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return json.dumps(str(value), ensure_ascii=False)
