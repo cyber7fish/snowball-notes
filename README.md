@@ -4,14 +4,17 @@ Snowball Notes turns completed Codex turns into reviewable Obsidian notes with a
 
 ## What is implemented
 
-- Transcript intake from `~/.codex/sessions/**/*.jsonl`
+- Transcript intake via `transcript_poll`, `transcript_watch`, or single-file `cli_wrap`
 - `source_confidence` scoring and pre-queue filtering
 - SQLite-backed task queue with claim semantics and state transitions
 - Heuristic agent runtime with tool calls, guardrails, proposals, trace, and replay bundle
-- Vault writer for archive, create, and append flows
+- Hybrid retrieval with local embeddings stored in SQLite
+- Vault writer for archive, create, append, and note-link flows
 - Review CLI for flagged runs
+- Optional FastAPI review server for pending approvals, trace detail, and confidence feedback
 - Status CLI with agent/parser/reconcile health metrics
-- Startup reconciliation audit and confidence calibration feedback loop
+- Sandbox eval runner with fixture import, score aggregation, review precision, and replay consistency metrics
+- Startup plus scheduled reconciliation audit and confidence calibration feedback loop
 - `unittest` coverage for confidence, parser, state machine, and end-to-end runtime
 
 ## Project layout
@@ -31,10 +34,41 @@ cd snowball-notes
 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m snowball_notes.cli worker --once
 PYTHONPATH=src python3 -m snowball_notes.cli status --days 7
+PYTHONPATH=src python3 -m snowball_notes.cli eval load eval/fixtures/sample_cases.json --replace
+PYTHONPATH=src python3 -m snowball_notes.cli eval run
 PYTHONPATH=src python3 -m snowball_notes.cli calibrate report
 ```
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
+
+Intake modes:
+
+```yaml
+intake:
+  mode: "transcript_poll"   # recursive directory scan with SQLite cursors
+  transcript_dir: "~/.codex/sessions"
+```
+
+```yaml
+intake:
+  mode: "transcript_watch"  # incremental in-process watch over the transcript tree
+  transcript_dir: "~/.codex/sessions"
+```
+
+```yaml
+intake:
+  mode: "cli_wrap"          # parse one rolling transcript file
+  cli_wrap_file: "./wrapped/current.jsonl"
+```
+
+Reconcile scheduling is configured in UTC. The default runs once on startup and once per day after `03:00 UTC`:
+
+```yaml
+reconcile:
+  enabled: true
+  run_on_startup: true
+  schedule_cron: "0 3 * * *"
+```
 
 If no config file is present, the runtime falls back to the local `heuristic-v1` adapter. The checked-in `config.yaml` is preconfigured for DeepSeek. To run a real tool-calling model with OpenAI Responses instead, set:
 
@@ -58,15 +92,37 @@ agent:
 
 and export `DEEPSEEK_API_KEY` before starting the worker.
 
+Retrieval defaults to an offline local embedding provider backed by SQLite. To switch to Voyage embeddings, set:
+
+```yaml
+embedding:
+  provider: "voyage"
+  voyage_model: "voyage-3-lite"
+```
+
+and export `VOYAGE_API_KEY`.
+
+To run the review server, install the optional review dependencies first:
+
+```bash
+pip install -e ".[review]"
+```
+
 ## Commands
 
 - `worker --once`: scan transcripts, enqueue events, claim one task, and run the agent once
 - `worker --forever`: continuous polling worker
 - `review list`: show pending review actions
-- `review approve <review_id> [--action create|append|archive] [--note-id NOTE_ID] [--title TITLE]`: generate a proposal from a pending review and commit it
+- `review serve [--host HOST] [--port PORT]`: start the FastAPI review server
+- `review approve <review_id> [--action create|append|archive|link] [--note-id NOTE_ID] [--title TITLE]`: generate a proposal from a pending review and commit it
+- `review mark-conflict <review_id> [--note-id NOTE_ID]`: resolve a review as a conflict without writing
+- `review discard <review_id>`: resolve a review as intentionally discarded
 - `review reject <review_id>`: mark a flagged case rejected
 - `status [--days N]`: print queue, runtime, parser, and reconcile health metrics
-- `replay <trace_id>`: dump a saved replay bundle
+- `replay <trace_id> [--mode dump|logical|live]`: dump or rerun a saved replay bundle
+- `eval load <fixture_path> [--replace]`: import eval fixtures into `eval_cases`
+- `eval run [--fixtures PATH] [--prompt-version VERSION] [--baseline-run RUN_ID]`: run sandbox eval and print a comparable report
+- `eval report [run_id] [--baseline-run RUN_ID]`: render a stored eval report
 - `calibrate add-feedback <turn_id> <trustworthy|partial|bad_parse>`: record parser confidence feedback
 - `calibrate report`: summarize confidence calibration buckets and recommendations
 

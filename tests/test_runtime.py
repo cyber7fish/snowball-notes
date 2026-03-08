@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -14,7 +15,12 @@ def _write_config(
     transcript_dir: Path,
     parser_version: str = "v1",
     min_confidence_for_append: float = 0.85,
+    intake_mode: str = "transcript_poll",
+    cli_wrap_file: str | None = None,
+    reconcile_run_on_startup: bool = True,
+    reconcile_schedule_cron: str = "0 3 * * *",
 ) -> None:
+    cli_wrap_value = "null" if cli_wrap_file is None else f"\"{cli_wrap_file}\""
     path.write_text(
         "\n".join(
             [
@@ -27,7 +33,9 @@ def _write_config(
                 "  archive_dir: \"Archive/Conversations\"",
                 "  atomic_dir: \"Knowledge/Atomic\"",
                 "intake:",
+                f"  mode: \"{intake_mode}\"",
                 f"  transcript_dir: \"{transcript_dir}\"",
+                f"  cli_wrap_file: {cli_wrap_value}",
                 f"  parser_version: \"{parser_version}\"",
                 "  min_response_length: 120",
                 "  min_confidence_to_run: 0.50",
@@ -48,6 +56,10 @@ def _write_config(
                 "  poll_interval_seconds: 10",
                 "  claim_timeout_seconds: 300",
                 "  max_retries: 3",
+                "reconcile:",
+                "  enabled: true",
+                f"  run_on_startup: {'true' if reconcile_run_on_startup else 'false'}",
+                f"  schedule_cron: \"{reconcile_schedule_cron}\"",
             ]
         ),
         encoding="utf-8",
@@ -195,6 +207,78 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_worker_runs_scheduled_reconcile_once_after_daily_slot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(
+                config_path,
+                transcripts,
+                reconcile_run_on_startup=False,
+                reconcile_schedule_cron="0 3 * * *",
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                with mock.patch(
+                    "snowball_notes.agent.orchestrator.now_utc",
+                    return_value=datetime(2026, 3, 8, 2, 0, tzinfo=timezone.utc),
+                ):
+                    self.assertIsNone(worker.run_once())
+                initial_count = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM audit_logs
+                    WHERE event_type = 'reconcile_completed'
+                    """
+                )
+                self.assertEqual(initial_count["count"], 0)
+
+                with mock.patch(
+                    "snowball_notes.agent.orchestrator.now_utc",
+                    return_value=datetime(2026, 3, 8, 4, 0, tzinfo=timezone.utc),
+                ):
+                    self.assertIsNone(worker.run_once())
+                after_first_slot = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM audit_logs
+                    WHERE event_type = 'reconcile_completed'
+                    """
+                )
+                self.assertEqual(after_first_slot["count"], 1)
+
+                with mock.patch(
+                    "snowball_notes.agent.orchestrator.now_utc",
+                    return_value=datetime(2026, 3, 8, 5, 0, tzinfo=timezone.utc),
+                ):
+                    self.assertIsNone(worker.run_once())
+                same_day_count = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM audit_logs
+                    WHERE event_type = 'reconcile_completed'
+                    """
+                )
+                self.assertEqual(same_day_count["count"], 1)
+
+                with mock.patch(
+                    "snowball_notes.agent.orchestrator.now_utc",
+                    return_value=datetime(2026, 3, 9, 4, 0, tzinfo=timezone.utc),
+                ):
+                    self.assertIsNone(worker.run_once())
+                next_day_count = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM audit_logs
+                    WHERE event_type = 'reconcile_completed'
+                    """
+                )
+                self.assertEqual(next_day_count["count"], 2)
+            finally:
+                db.close()
+
     def test_worker_creates_note_and_trace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -338,6 +422,88 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(len(replay_rows), 1)
                 note_rows = db.fetchall("SELECT note_id FROM notes WHERE note_type = 'atomic'")
                 self.assertEqual(len(note_rows), 1)
+            finally:
+                db.close()
+
+    def test_worker_links_two_existing_notes_when_turn_is_explicitly_relational(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts)
+            _write_transcript(
+                transcripts / "session.jsonl",
+                "How should I link the Agent Runtime State Machine note with the Guarded Side Effects note?",
+                (
+                    "Link these notes because the runtime state machine depends on guarded side effects. "
+                    "Readers should be able to navigate between them in both directions."
+                ),
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                source_path, source_hash = vault.write_new_note(
+                    note_id="note_runtime",
+                    title="Agent Runtime State Machine",
+                    content="## Summary\nSeparate plan and commit phases.",
+                    tags=["agent"],
+                    topics=["runtime"],
+                    source_event_ids=["evt_seed_runtime"],
+                    status="approved",
+                )
+                target_path, target_hash = vault.write_new_note(
+                    note_id="note_guardrails",
+                    title="Guarded Side Effects",
+                    content="## Summary\nProposals should stay side-effect free until commit time.",
+                    tags=["agent"],
+                    topics=["safety"],
+                    source_event_ids=["evt_seed_guardrails"],
+                    status="approved",
+                )
+                for note_id, title, note_path, content_hash in [
+                    ("note_runtime", "Agent Runtime State Machine", source_path, source_hash),
+                    ("note_guardrails", "Guarded Side Effects", target_path, target_hash),
+                ]:
+                    db.execute(
+                        """
+                        INSERT INTO notes (note_id, note_type, title, vault_path, content_hash, status, metadata_json, created_at, updated_at)
+                        VALUES (?, 'atomic', ?, ?, ?, 'approved', '{}', '2026-03-07T00:00:00+00:00', '2026-03-07T00:00:00+00:00')
+                        """,
+                        (note_id, title, str(note_path.resolve()), content_hash),
+                    )
+                db.commit()
+
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "completed")
+
+                trace = db.fetchone(
+                    """
+                    SELECT final_decision
+                    FROM agent_traces
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(trace["final_decision"], "link_notes")
+
+                proposal = db.fetchone(
+                    """
+                    SELECT action_type, status, payload_json
+                    FROM action_proposals
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                )
+                self.assertEqual(proposal["action_type"], "link_notes")
+                self.assertEqual(proposal["status"], "committed")
+                self.assertIn("\"source_note_id\": \"note_runtime\"", proposal["payload_json"])
+                self.assertIn("\"target_note_id\": \"note_guardrails\"", proposal["payload_json"])
+
+                runtime_note = source_path.read_text(encoding="utf-8")
+                guardrails_note = target_path.read_text(encoding="utf-8")
+                self.assertIn("[[Guarded Side Effects]]", runtime_note)
+                self.assertIn("[[Agent Runtime State Machine]]", guardrails_note)
             finally:
                 db.close()
 
@@ -543,6 +709,66 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(result.state.value, "completed")
                 task_count = db.fetchone("SELECT COUNT(*) AS count FROM tasks")
                 self.assertEqual(task_count["count"], 1)
+            finally:
+                db.close()
+
+    def test_worker_transcript_watch_detects_new_file_after_boot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            config_path = root / "config.yaml"
+            _write_config(config_path, transcripts, intake_mode="transcript_watch")
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                self.assertIsNone(worker.run_once())
+
+                _write_transcript(
+                    transcripts / "session.jsonl",
+                    "How should transcript watch mode detect new session files?",
+                    (
+                        "Keep an in-memory snapshot of seen files, reparse new or changed transcripts, "
+                        "and still rely on queue dedupe for safety."
+                    ),
+                )
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "completed")
+                task_count = db.fetchone("SELECT COUNT(*) AS count FROM tasks")
+                self.assertEqual(task_count["count"], 1)
+            finally:
+                db.close()
+
+    def test_worker_cli_wrap_mode_reads_configured_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcripts = root / "sessions"
+            transcripts.mkdir(parents=True)
+            wrapped_dir = root / "wrapped"
+            wrapped_dir.mkdir(parents=True)
+            wrapped_path = wrapped_dir / "current.jsonl"
+            config_path = root / "config.yaml"
+            _write_config(
+                config_path,
+                transcripts,
+                intake_mode="cli_wrap",
+                cli_wrap_file="./wrapped/current.jsonl",
+            )
+            _write_current_transcript(
+                wrapped_path,
+                "How should cli wrap mode ingest the current transcript file?",
+                (
+                    "Point intake at the wrapped transcript path and apply the same parser and queue flow "
+                    "without scanning the whole sessions tree."
+                ),
+            )
+            config, db, vault, worker = build_runtime(str(config_path))
+            try:
+                result = worker.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.state.value, "completed")
+                event = db.fetchone("SELECT session_file FROM conversation_events LIMIT 1")
+                self.assertEqual(Path(event["session_file"]).resolve(), wrapped_path.resolve())
             finally:
                 db.close()
 

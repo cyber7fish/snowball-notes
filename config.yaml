@@ -9,7 +9,9 @@ vault:
   atomic_dir: "Knowledge/Atomic"
 
 intake:
+  mode: "transcript_poll"
   transcript_dir: "~/.codex/sessions"
+  cli_wrap_file: null
   parser_version: "v1"
   min_response_length: 120
   min_confidence_to_run: 0.50
@@ -24,10 +26,24 @@ agent:
   api_key_env: "DEEPSEEK_API_KEY"
   api_base_url: "https://api.deepseek.com/chat/completions"
 
+embedding:
+  provider: "local"
+  voyage_model: "voyage-3-lite"
+  local_model: "hash-384"
+  vector_store: "sqlite_blob"
+  index_text_strategy: "title_plus_summary"
+  api_key_env: "VOYAGE_API_KEY"
+  api_base_url: "https://api.voyageai.com/v1/embeddings"
+  local_dimensions: 384
+
 retrieval:
   top_k: 5
   append_threshold: 0.82
   review_threshold: 0.62
+  title_match_threshold: 0.85
+  tag_min_overlap: 2
+  embedding_top_k: 5
+  embedding_threshold: 0.80
 
 guardrails:
   min_confidence_for_note: 0.70
@@ -37,3 +53,8 @@ worker:
   poll_interval_seconds: 10
   claim_timeout_seconds: 300
   max_retries: 3
+
+reconcile:
+  enabled: true
+  run_on_startup: true
+  schedule_cron: "0 3 * * *"
