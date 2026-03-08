@@ -83,6 +83,61 @@ graph LR
 - **Eval Runner** — Sandboxed execution of annotated test cases with decision accuracy, safety, cost, and replay metrics
 - **Review UI** — CLI and optional FastAPI server for human review of flagged cases
 
+## Memory
+
+The agent uses two distinct memory layers with different scopes and lifetimes.
+
+### Session Memory (short-term)
+
+Backed by SQLite. At the start of each run, the agent loads the last 20 processed turns for the current conversation:
+
+```
+session_turns        — turn_id, final_decision, processed_at
+session_note_actions — note_id, action_type, note_title per turn
+```
+
+This prevents re-processing the same turn in the same session and lets the agent detect patterns across recent turns (e.g. "I already appended to this note two turns ago").
+
+### Knowledge Index (long-term)
+
+`SQLiteKnowledgeIndex` implements hybrid retrieval over the full note vault. Every `search_similar_notes` call scores all non-deleted notes across four signals and returns the top-k:
+
+| Signal | Method |
+|---|---|
+| Title similarity | `SequenceMatcher` ratio between normalized query and note title |
+| Body token overlap | Jaccard index over tokenized query and first 1 200 chars of note body |
+| Metadata overlap | Jaccard over query tokens vs. tags + topics; boosted when tag overlap ≥ threshold |
+| Embedding cosine | Optional; Voyage / DashScope / local sentence-transformers; cached in vector store |
+
+Exact substring match in the title triggers a hard boost to ≥ 0.92, ensuring obvious duplicates are surfaced regardless of score blending. The combined `similarity` score is what the agent reads when deciding create vs. append vs. skip.
+
+Search results are also frozen into `AgentState.knowledge_snapshot_refs` at call time, giving the `ReplayBundle` a content-hash snapshot of every note that was visible during the original run.
+
+## Tools
+
+The agent has 9 tools organized into two categories.
+
+### Decision tools (read-only, not gated by guardrails)
+
+| Tool | What it does |
+|---|---|
+| `assess_turn_value` | Classifies the turn as `note` / `archive` / `skip` using rule-based signals: length, small-talk detection, technical keywords, `source_confidence`, secret-like content, and project-meta detection |
+| `extract_knowledge_points` | Extracts `candidate_title`, `summary`, `key_points`, `topics`, and `tags` from the turn text |
+| `search_similar_notes` | Queries the Knowledge Index; snapshots matching note IDs + content hashes into the ReplayBundle |
+| `read_note` | Loads full note content by `note_id` so the agent can read before deciding to append |
+
+### Action tools (each call checked by guardrails before execution)
+
+| Tool | What it does |
+|---|---|
+| `propose_create_note` | Appends a `create_note` `ActionProposal` to `AgentState.proposals`; increments `write_count` |
+| `propose_append_to_note` | Appends an `append_note` proposal; increments both `write_count` and `append_count` |
+| `propose_archive_turn` | Appends an `archive_turn` proposal for low-value or project-meta turns |
+| `propose_link_notes` | Appends a `link_notes` proposal to create an Obsidian wiki-link between two notes |
+| `flag_for_review` | Writes immediately to `review_actions` (bypasses write-limit guardrails; always allowed) |
+
+Action tools produce no vault or DB side effects during the ReAct loop — they only accumulate proposals. The `Committer` validates and commits the full proposal batch after the loop terminates.
+
 ## Results
 
 ### `snowball status` output
