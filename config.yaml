@@ -27,7 +27,7 @@ agent:
   api_base_url: "https://api.deepseek.com/chat/completions"
 
 embedding:
-  provider: "local"
+  provider: "dashscope"
   dashscope_model: "text-embedding-v4"
   dashscope_dimensions: 1024
   dashscope_api_key_env: "DASHSCOPE_API_KEY"
