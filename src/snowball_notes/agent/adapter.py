@@ -702,11 +702,14 @@ class AnthropicMessagesAdapter(_ToolAwareAdapter):
         )
 
     def _request_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        rendered_messages = self._anthropic_messages(messages)
+        if self.config.agent.enable_prompt_cache:
+            self._mark_conversation_cache_breakpoint(rendered_messages)
         body: dict[str, Any] = {
             "model": self.model_name,
             "max_tokens": self.config.agent.max_output_tokens,
             "tools": self._anthropic_tool_definitions(),
-            "messages": self._anthropic_messages(messages),
+            "messages": rendered_messages,
         }
         system_blocks = self._system_blocks()
         if system_blocks:
@@ -747,6 +750,28 @@ class AnthropicMessagesAdapter(_ToolAwareAdapter):
             block["cache_control"] = {"type": "ephemeral"}
         return [block]
 
+    def _mark_conversation_cache_breakpoint(self, rendered_messages: list[dict[str, Any]]) -> None:
+        """Cache the growing conversation prefix across ReAct steps.
+
+        The system breakpoint (in ``_system_blocks``) only caches tools + system.
+        Placing a second breakpoint on the last block of the most recent turn lets
+        each step read the entire prior conversation from cache and pay full price
+        only for the newest turn. Earlier breakpoints stay valid read points, so
+        hits accrue incrementally as the loop grows.
+
+        This is only sound because the frozen tool-result budget keeps earlier
+        blocks byte-stable; without it, a re-trimmed prefix would miss every step.
+        Anthropic allows up to 4 breakpoints — system + last turn uses 2.
+        """
+        if not rendered_messages:
+            return
+        content = rendered_messages[-1].get("content")
+        if not isinstance(content, list) or not content:
+            return
+        last_block = content[-1]
+        if isinstance(last_block, dict):
+            last_block["cache_control"] = {"type": "ephemeral"}
+
     def _anthropic_tool_definitions(self) -> list[dict[str, Any]]:
         definitions = []
         for item in self._responses_tool_definitions():
@@ -772,7 +797,11 @@ class AnthropicMessagesAdapter(_ToolAwareAdapter):
             role = message.get("role")
             if role == "user":
                 flush_tool_results()
-                rendered.append({"role": "user", "content": self._render_initial_turn([message])})
+                # Block form (not a bare string) so a cache breakpoint can be
+                # placed on it without changing the text bytes across steps.
+                rendered.append(
+                    {"role": "user", "content": [{"type": "text", "text": self._render_initial_turn([message])}]}
+                )
             elif role == "assistant":
                 flush_tool_results()
                 rendered.append(self._assistant_message_blocks(message.get("content")))

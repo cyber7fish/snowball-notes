@@ -154,7 +154,7 @@ The agent re-sends its full message history to the model on every ReAct step, so
 - When over `max_tool_result_chars`, the **largest** results are replaced with a compact placeholder, oldest-first on ties, until the total fits — but the most recent `keep_recent_tool_results` are always preserved (the agent is most likely still reasoning over them).
 - Replacement decisions are **frozen** in `AgentState.replacement_state`: once a result is cleared it stays cleared, and re-applying the budget to the same prefix yields byte-identical output.
 
-That last property is the point. The Anthropic adapter caches the system prefix (`cache_control`), and any prefix cache is invalidated by a single changed byte earlier in the request. A naive "summarize the history" pass would rewrite earlier bytes every turn and silently destroy the cache hit; freezing the decision keeps the trimmed prefix stable so the cache survives. The full history is retained in `messages` and the `ReplayBundle` — only the model-facing copy is trimmed, so replay still sees the original tool outputs.
+That last property is the point. The Anthropic adapter places two cache breakpoints — one on the static system prefix, one on the last block of the most recent turn — so each ReAct step reads the entire prior conversation from cache and pays full price only for the newest turn. Any prefix cache is invalidated by a single changed byte earlier in the request, so this only works because earlier blocks are byte-stable: a naive "summarize the history" pass would rewrite earlier bytes every turn and silently destroy the cache hit, whereas freezing the budget decision keeps the trimmed prefix stable. The full history is retained in `messages` and the `ReplayBundle` — only the model-facing copy is trimmed, so replay still sees the original tool outputs.
 
 Knobs (all on `agent` in `config.yaml`): `enable_context_budget` (default `true`), `max_tool_result_chars` (default `16000`), `keep_recent_tool_results` (default `2`). When clearing occurs, a `context_budget_applied` row is written to `audit_logs` with the cleared count and characters saved.
 
@@ -364,11 +364,14 @@ agent:
 ```
 
 The Anthropic adapter rebuilds the full `messages` array on every step (the API
-is stateless) and sends the static system prompt as a cacheable block, so tools
-+ system are served from the prompt cache on every step after the first
-(`usage.cache_read_input_tokens` confirms the hit). It is wired into the same
-`AgentTrace` / `ReplayBundle` / eval path as the other providers — no model is
-treated specially by the runtime.
+is stateless) and places two cache breakpoints: one on the static system prompt
+(caches tools + system) and one on the last block of the most recent turn (caches
+the growing conversation prefix across ReAct steps). After the first step each
+step reads the entire prior context from cache and pays full price only for the
+newest turn (`usage.cache_read_input_tokens` confirms the hit). This is only
+sound because the frozen tool-result budget keeps earlier blocks byte-stable. It
+is wired into the same `AgentTrace` / `ReplayBundle` / eval path as the other
+providers — no model is treated specially by the runtime.
 
 ### Embedding providers
 

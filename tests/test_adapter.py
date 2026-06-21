@@ -68,11 +68,14 @@ class StubAnthropicMessagesAdapter(AnthropicMessagesAdapter):
     def _request_payload(self, messages):
         # Capture the exact wire body the real adapter would POST, so tests can
         # assert tool/system shape and prompt-cache placement without a network call.
+        rendered_messages = self._anthropic_messages(messages)
+        if self.config.agent.enable_prompt_cache:
+            self._mark_conversation_cache_breakpoint(rendered_messages)
         body = {
             "model": self.model_name,
             "max_tokens": self.config.agent.max_output_tokens,
             "tools": self._anthropic_tool_definitions(),
-            "messages": self._anthropic_messages(messages),
+            "messages": rendered_messages,
         }
         system_blocks = self._system_blocks()
         if system_blocks:
@@ -374,6 +377,64 @@ class AnthropicAdapterTests(unittest.TestCase):
             self.assertEqual(rendered[2]["role"], "user")
             self.assertEqual(rendered[2]["content"][0]["type"], "tool_result")
             self.assertEqual(rendered[2]["content"][0]["tool_use_id"], "toolu_1")
+
+    def _multiturn_messages(self):
+        return [
+            {"role": "user", "content": {"turn_id": "t", "user_message": "u", "assistant_final_answer": "a"}},
+            {
+                "role": "assistant",
+                "content": {
+                    "decision_summary": "Read the note.",
+                    "stop_reason": "tool_use",
+                    "tool_calls": [{"call_id": "toolu_1", "name": "read_note", "input": {"note_id": "n1"}}],
+                },
+            },
+            {"role": "tool", "call_id": "toolu_1", "name": "read_note", "content": {"note_id": "n1"}},
+        ]
+
+    def test_conversation_cache_breakpoint_on_last_turn(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            config = default_config(Path(temp_dir))
+            config.agent.provider = "anthropic"
+            adapter = StubAnthropicMessagesAdapter(
+                config,
+                [{"id": "m", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}],
+            )
+            state = AgentState(
+                event=_sample_event(),
+                task_id="task_1",
+                trace_id="trace_1",
+                session_memory=SessionMemory(conversation_id="conv_test"),
+            )
+            adapter.respond(state.event, state, self._multiturn_messages(), {}, 1)
+            sent = adapter.bodies[0]["messages"]
+            # Last turn's last block carries the conversation breakpoint...
+            self.assertEqual(sent[-1]["content"][-1]["cache_control"], {"type": "ephemeral"})
+            # ...and earlier turns do not (one breakpoint walks the prefix).
+            self.assertNotIn("cache_control", sent[0]["content"][-1])
+
+    def test_no_conversation_breakpoint_when_cache_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            config = default_config(Path(temp_dir))
+            config.agent.provider = "anthropic"
+            config.agent.enable_prompt_cache = False
+            adapter = StubAnthropicMessagesAdapter(
+                config,
+                [{"id": "m", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}],
+            )
+            state = AgentState(
+                event=_sample_event(),
+                task_id="task_1",
+                trace_id="trace_1",
+                session_memory=SessionMemory(conversation_id="conv_test"),
+            )
+            adapter.respond(state.event, state, self._multiturn_messages(), {}, 1)
+            body = adapter.bodies[0]
+            # System prompt is still sent, but without a cache breakpoint.
+            self.assertNotIn("cache_control", body["system"][0])
+            for message in body["messages"]:
+                for block in message["content"]:
+                    self.assertNotIn("cache_control", block)
 
     def test_build_model_adapter_selects_anthropic(self):
         with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
