@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 from snowball_notes.cli import build_runtime
-
 from tests.test_runtime import _write_config, _write_transcript
 
 

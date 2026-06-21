@@ -1,5 +1,7 @@
 # Snowball Notes
 
+[![CI](https://github.com/cyber7fish/snowball-notes/actions/workflows/ci.yml/badge.svg)](https://github.com/cyber7fish/snowball-notes/actions/workflows/ci.yml)
+
 An autonomous agent that curates AI conversation turns into a reviewable Obsidian knowledge base — with controlled side effects, full traceability, and deterministic replay.
 
 ## The Problem
@@ -280,6 +282,32 @@ PYTHONPATH=src python3 -m snowball_notes.cli eval run
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
+## Development
+
+CI runs on every push and pull request (`.github/workflows/ci.yml`): lint + import order (`ruff`), static types (`mypy`), the `unittest` suite across Python 3.11–3.13, and an offline end-to-end eval smoke on the heuristic adapter (no API keys). Reproduce locally:
+
+```bash
+pip install -e ".[dev]"
+
+ruff check .                                   # lint + import order
+mypy                                           # static type check (src/)
+PYTHONPATH=src python3 -m unittest discover -s tests
+
+# Offline end-to-end smoke (heuristic adapter + local embeddings, no keys)
+PYTHONPATH=src python3 -m snowball_notes.cli --config ci/offline.config.yaml eval load eval/fixtures/sample_cases.json --replace
+PYTHONPATH=src python3 -m snowball_notes.cli --config ci/offline.config.yaml eval run
+```
+
+### Docker
+
+```bash
+docker build -t snowball-notes .
+docker run --rm snowball-notes            # prints health for the bundled offline config
+docker run --rm snowball-notes worker --once
+```
+
+The image runs the offline configuration by default (heuristic adapter, local embeddings — no API keys). Mount a config and pass provider keys via `-e` / `-v` to use a hosted model.
+
 ## Configuration
 
 ### Environment file
@@ -312,7 +340,23 @@ agent:
 agent:
   provider: "openai_responses"
   model: "gpt-5.2-codex"
+
+# Anthropic Claude (Messages API, tool use)
+agent:
+  provider: "anthropic"
+  model: "claude-opus-4-8"
+  api_key_env: "ANTHROPIC_API_KEY"
+  max_output_tokens: 4096
+  enable_prompt_cache: true   # cache tools + system prompt across steps
+  thinking: "off"             # set "adaptive" once content blocks are replayed
 ```
+
+The Anthropic adapter rebuilds the full `messages` array on every step (the API
+is stateless) and sends the static system prompt as a cacheable block, so tools
++ system are served from the prompt cache on every step after the first
+(`usage.cache_read_input_tokens` confirms the hit). It is wired into the same
+`AgentTrace` / `ReplayBundle` / eval path as the other providers — no model is
+treated specially by the runtime.
 
 ### Embedding providers
 

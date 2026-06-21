@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-type:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dev tooling
+        run: pip install -e ".[dev]"
+      - name: Ruff (lint + import order)
+        run: ruff check .
+      - name: Mypy (type check)
+        run: mypy
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: pip install -e .
+      - name: Run unittest suite
+        run: python -m unittest discover -s tests -v
+
+  eval-smoke:
+    name: Offline eval smoke (heuristic adapter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: pip install -e .
+      - name: Load + run eval on the offline heuristic adapter
+        # No API keys: exercises the full agent loop, committer, and eval
+        # runner end-to-end against the bundled fixtures, deterministically.
+        run: |
+          python -m snowball_notes.cli --config ci/offline.config.yaml eval load eval/fixtures/sample_cases.json --replace
+          python -m snowball_notes.cli --config ci/offline.config.yaml eval run
+
+  docker:
+    name: Docker build + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t snowball-notes .
+      - name: Smoke-run the image (offline config, no keys)
+        run: docker run --rm snowball-notes status --days 7

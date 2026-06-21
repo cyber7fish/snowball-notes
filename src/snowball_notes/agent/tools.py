@@ -26,7 +26,7 @@ DEFAULT_TITLE_TRUNCATION = 64
 DEFAULT_FALLBACK_TITLE = "Snowball Notes 知识笔记"
 # ─────────────────────────────────────────────────────────────────
 
-TOOL_SCHEMAS = {
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "assess_turn_value": {"required": []},
     "extract_knowledge_points": {"required": []},
     "search_similar_notes": {"required": ["query"], "types": {"query": str, "top_k": int}},

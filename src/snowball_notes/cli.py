@@ -255,17 +255,17 @@ def main(argv: list[str] | None = None) -> int:
                 if not dataset:
                     print("no eval cases loaded", file=sys.stderr)
                     return 1
-                report = EvalRunner(config, db).run(dataset, prompt_version=args.prompt_version)
+                eval_report = EvalRunner(config, db).run(dataset, prompt_version=args.prompt_version)
                 baseline = load_eval_report(db, args.baseline_run) if args.baseline_run else None
-                print(render_eval_report(report.to_dict(), baseline))
+                print(render_eval_report(eval_report.to_dict(), baseline))
                 return 0
             if args.eval_command == "report":
-                report = load_eval_report(db, args.run_id)
-                if report is None:
+                stored_report = load_eval_report(db, args.run_id)
+                if stored_report is None:
                     print("eval report not found", file=sys.stderr)
                     return 1
                 baseline = load_eval_report(db, args.baseline_run) if args.baseline_run else None
-                print(render_eval_report(report, baseline))
+                print(render_eval_report(stored_report, baseline))
                 return 0
         if args.command == "calibrate":
             if args.calibrate_command == "add-feedback":

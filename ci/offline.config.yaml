@@ -1,0 +1,23 @@
+# Offline config for CI: no API keys required.
+# Uses the heuristic agent adapter and the local hash embedding provider so the
+# full agent loop + committer + eval runner can be exercised deterministically.
+paths:
+  db: "./data/snowball.db"
+  log: "./logs/snowball.jsonl"
+
+vault:
+  path: "./vault"
+
+agent:
+  provider: "heuristic"
+  model: "heuristic-v1"
+  max_steps: 8
+  prompt_version: "agent_system/v1.md"
+  max_writes_per_run: 1
+  max_appends_per_run: 1
+
+embedding:
+  provider: "local"
+  local_model: "hash-384"
+  vector_store: "sqlite_blob"
+  local_dimensions: 384

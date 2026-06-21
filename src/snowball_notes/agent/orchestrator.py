@@ -9,8 +9,8 @@ from ..intake.receiver import register_events
 from ..intake.transcript_poll import IntakeWatchState, collect_transcript_events
 from ..models import AgentResult
 from ..queue.task_claim import claim_next_task
-from ..storage.reconcile import reconcile_vault_and_db
 from ..storage.audit import write_audit_log
+from ..storage.reconcile import reconcile_vault_and_db
 from ..utils import now_utc, parse_datetime
 
 

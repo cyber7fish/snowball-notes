@@ -265,7 +265,7 @@ class CommitterCommitTests(unittest.TestCase):
 
     def test_commit_append_note(self):
         committer = self._setup()
-        note_path = _seed_note(self.db, self.vault, "note_append", "Append Target")
+        _seed_note(self.db, self.vault, "note_append", "Append Target")
         self.state.proposals.append(
             _create_proposal(self.state, "append_note", _target_note_id="note_append")
         )

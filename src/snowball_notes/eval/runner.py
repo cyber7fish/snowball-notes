@@ -16,7 +16,6 @@ from ..storage.sqlite import Database
 from ..storage.vault import Vault
 from ..utils import new_id, now_utc_iso
 
-
 WRITE_DECISIONS = {"create_note", "append_note", "archive_turn", "link_notes"}
 DECISION_ALIASES = {
     "create": "create_note",

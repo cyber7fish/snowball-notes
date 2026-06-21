@@ -9,7 +9,6 @@ from typing import Any, Iterator
 
 from ..utils import ensure_directory
 
-
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS conversation_events (
   event_id TEXT PRIMARY KEY,
@@ -225,7 +224,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 class Database:
     def __init__(self, path: Path):
         self.path = path
-        self.event_logger = None
+        self.event_logger: Any = None
         ensure_directory(path.parent)
         self._connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._connection.row_factory = sqlite3.Row

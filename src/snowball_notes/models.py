@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from .utils import now_utc, now_utc_iso
+from .utils import now_utc_iso
 
 
 class RunState(str, Enum):

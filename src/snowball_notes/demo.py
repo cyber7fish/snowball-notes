@@ -10,7 +10,6 @@ from .models import StandardEvent
 from .storage.sqlite import Database
 from .utils import ensure_directory, now_utc_iso, write_atomic_text
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEMO_FIXTURE_ROOT = REPO_ROOT / "demo" / "fixtures"
 DEMO_TRANSCRIPT_ROOT = DEMO_FIXTURE_ROOT / "transcripts"

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import default_config
+from ..embedding import build_embedding_provider, build_vector_store
 from ..models import (
     ActionProposal,
     ModelResponse,
@@ -19,7 +20,6 @@ from ..models import (
     ToolCall,
     ToolResult,
 )
-from ..embedding import build_embedding_provider, build_vector_store
 from ..storage.sqlite import Database
 from ..storage.vault import Vault
 from ..utils import new_id, now_utc_iso, safe_read_text, sha256_text, write_atomic_text
@@ -27,7 +27,6 @@ from .adapter import build_model_adapter
 from .memory import SQLiteKnowledgeIndex
 from .runtime import SnowballAgent
 from .tools import Tool, build_tool_registry
-
 
 ACTION_TOOL_TO_TYPE = {
     "propose_create_note": "create_note",
@@ -434,7 +433,7 @@ class _FrozenReplayContext:
         )
 
 
-def _build_frozen_tools(db, replay_context: _ReplayContext) -> dict[str, Tool]:
+def _build_frozen_tools(db, replay_context: _ReplayContext) -> dict[str, Any]:
     frozen_context = _FrozenReplayContext(replay_context)
     tools = {}
     for tool_name in [

@@ -3,9 +3,9 @@ import unittest
 from pathlib import Path
 
 from snowball_notes.agent.state_machine import (
+    VALID_TRANSITIONS,
     InvalidStateTransition,
     StateTransitionConflict,
-    VALID_TRANSITIONS,
     transition_state,
 )
 from snowball_notes.models import RunState

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from collections import Counter
 from datetime import timedelta
+from typing import Any
 
 from ..utils import now_utc, parse_datetime
-
 
 APPROVED_REVIEW_ACTIONS = {
     "approved",
@@ -44,7 +44,7 @@ def collect_parser_health(db, sample_size: int = 50) -> dict[str, float | int | 
     }
 
 
-def collect_agent_health(db, window_days: int = 7) -> dict[str, object]:
+def collect_agent_health(db, window_days: int = 7) -> dict[str, Any]:
     cutoff = now_utc() - timedelta(days=window_days)
     trace_rows = _filter_recent_rows(
         db.fetchall(

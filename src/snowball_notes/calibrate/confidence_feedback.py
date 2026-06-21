@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 from ..utils import new_id, now_utc_iso
 
-
 HUMAN_LABELS = {"trustworthy", "partial", "bad_parse"}
 BUCKET_SPECS = (
     (0.0, 0.3),

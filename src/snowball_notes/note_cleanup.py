@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 LOCAL_LINK_RE = re.compile(r"\[([^\]]+)\]\((/Users/[^)\s]+(?:#[^)]+)?)\)")
 WIKILINK_ALIAS_RE = re.compile(r"\[\[([^\]|]+)\|([^\]]+)\]\]")
 

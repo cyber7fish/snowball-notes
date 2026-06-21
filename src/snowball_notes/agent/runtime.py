@@ -5,9 +5,8 @@ import time
 from pathlib import Path
 
 from ..config import SnowballConfig
-from ..models import AgentResult, ReplayBundle, RunState, ToolResult
+from ..models import AgentResult, ReplayBundle, RunState
 from ..storage.audit import write_audit_log
-from ..utils import now_utc_iso
 from .adapter import ModelRetryableError
 from .commit import Committer
 from .guardrails import check_guardrail

@@ -3,11 +3,19 @@ import unittest
 from pathlib import Path
 
 from snowball_notes.agent.memory import SQLiteKnowledgeIndex
-from snowball_notes.agent.state import AgentState
 from snowball_notes.agent.runtime import SnowballAgent
+from snowball_notes.agent.state import AgentState
 from snowball_notes.agent.tools import AssessTurnValueTool, build_tool_registry
 from snowball_notes.config import default_config
-from snowball_notes.models import ModelResponse, RunState, SessionMemory, StandardEvent, TaskRecord, TokenUsage, ToolCall
+from snowball_notes.models import (
+    ModelResponse,
+    RunState,
+    SessionMemory,
+    StandardEvent,
+    TaskRecord,
+    TokenUsage,
+    ToolCall,
+)
 from snowball_notes.storage.sqlite import Database
 from snowball_notes.storage.vault import Vault
 

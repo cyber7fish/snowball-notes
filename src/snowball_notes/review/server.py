@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from html import escape
 
 from ..calibrate.confidence_feedback import HUMAN_LABELS, record_confidence_feedback
 from ..config import load_config

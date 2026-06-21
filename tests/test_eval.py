@@ -6,8 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from snowball_notes.cli import build_runtime, main
-from snowball_notes.eval.runner import load_eval_cases
-from snowball_notes.eval.runner import load_eval_report
+from snowball_notes.eval.runner import load_eval_cases, load_eval_report
 
 
 def _write_config(path: Path) -> None:

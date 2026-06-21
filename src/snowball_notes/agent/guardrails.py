@@ -4,7 +4,6 @@ from ..config import SnowballConfig
 from ..models import GuardrailResult
 from .tools import is_project_meta_turn
 
-
 ACTION_TOOLS = {
     "propose_create_note",
     "propose_append_to_note",

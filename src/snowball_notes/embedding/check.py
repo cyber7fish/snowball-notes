@@ -10,7 +10,6 @@ from .sqlite_blob import SQLiteBlobVectorStore
 from .sqlite_vec import SqliteVecStore
 from .voyage import VoyageEmbeddingProvider
 
-
 DEFAULT_PROBE_TEXT = (
     "Agent runtime guardrails keep tool calls side-effect free until commit validation."
 )
