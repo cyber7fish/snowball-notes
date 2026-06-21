@@ -8,7 +8,7 @@ from typing import Any
 from urllib import error, request
 
 from ..config import SnowballConfig
-from ..models import ModelResponse, ToolCall, TokenUsage
+from ..models import ModelResponse, TokenUsage, ToolCall
 from ..utils import new_id, normalize_text
 from .tools import TOOL_SCHEMAS, compose_append_content, compose_archive_payload, compose_atomic_note_content
 
@@ -37,6 +37,11 @@ DEFAULT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 DEFAULT_DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
+DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+DEFAULT_ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
+ANTHROPIC_VERSION = "2023-06-01"
+RETRYABLE_HTTP_CODES = {408, 409, 429, 500, 502, 503, 504, 529}
 
 
 class HeuristicModelAdapter:
@@ -279,6 +284,8 @@ class HeuristicModelAdapter:
 
 
 class _ToolAwareAdapter:
+    config: SnowballConfig
+
     def _load_prompt(self) -> str:
         prompt_path = Path(__file__).resolve().parents[1] / "prompts" / self.config.agent.prompt_version
         if not prompt_path.exists():
@@ -589,7 +596,7 @@ class DeepSeekChatCompletionsAdapter(_ToolAwareAdapter):
                     },
                 }
             )
-        message = {
+        message: dict[str, Any] = {
             "role": "assistant",
             "content": str(content.get("decision_summary") or "") or None,
         }
@@ -611,6 +618,208 @@ class DeepSeekChatCompletionsAdapter(_ToolAwareAdapter):
         return "Model ended the turn."
 
 
+class AnthropicMessagesAdapter(_ToolAwareAdapter):
+    """Claude tool-calling adapter over the stateless Messages API.
+
+    Like the DeepSeek adapter, this rebuilds the full ``messages`` array from the
+    runtime's message log on every step (the API is stateless). Two Claude-native
+    properties are exercised here and exposed as eval levers:
+
+    - The static system prompt is sent as a cacheable block (``cache_control``),
+      so tools + system are served from the prompt cache on every step after the
+      first. ``usage.cache_read_input_tokens`` confirms the hit.
+    - Extended thinking is configurable via ``agent.thinking`` (``off`` by
+      default). It is left off until the runtime preserves provider-native
+      content blocks, because adaptive thinking requires echoing thinking blocks
+      back verbatim across tool-result turns.
+    """
+
+    version = "anthropic-messages-v1"
+
+    def __init__(self, config: SnowballConfig):
+        self.config = config
+        model = config.agent.model
+        self.model_name = model if model and model != "heuristic-v1" else DEFAULT_ANTHROPIC_MODEL
+        api_key_env = config.agent.api_key_env
+        if api_key_env == DEFAULT_OPENAI_API_KEY_ENV:
+            api_key_env = DEFAULT_ANTHROPIC_API_KEY_ENV
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            raise RuntimeError(f"missing API key env: {api_key_env}")
+        self.api_key = api_key
+        self.api_base_url = config.agent.api_base_url
+        if self.api_base_url == DEFAULT_OPENAI_RESPONSES_URL:
+            self.api_base_url = DEFAULT_ANTHROPIC_MESSAGES_URL
+
+    def respond(self, event, state, messages, tools, step_index: int) -> ModelResponse:
+        payload = self._request_payload(messages)
+        content = payload.get("content") or []
+        function_calls = []
+        text_parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "tool_use":
+                function_calls.append(
+                    ToolCall(
+                        call_id=block["id"],
+                        name=block["name"],
+                        input=block.get("input") or {},
+                    )
+                )
+            elif block_type == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text.strip())
+        usage_payload = payload.get("usage") or {}
+        # Report total prompt size (uncached + cache read + cache write) so the
+        # eval's token metrics reflect real context, and cache savings show up as
+        # the gap between billed and total input.
+        input_tokens = (
+            int(usage_payload.get("input_tokens") or 0)
+            + int(usage_payload.get("cache_read_input_tokens") or 0)
+            + int(usage_payload.get("cache_creation_input_tokens") or 0)
+        )
+        usage = TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=int(usage_payload.get("output_tokens") or 0),
+        )
+        stop_reason = "tool_use" if function_calls else "end_turn"
+        decision_summary = " ".join(text_parts).strip()
+        if not decision_summary:
+            decision_summary = (
+                ", ".join(f"{call.name}()" for call in function_calls)
+                if function_calls
+                else "Model ended the turn."
+            )
+        return ModelResponse(
+            stop_reason=stop_reason,
+            tool_use_blocks=function_calls,
+            decision_summary=decision_summary,
+            usage=usage,
+            provider_response_id=payload.get("id"),
+        )
+
+    def _request_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.model_name,
+            "max_tokens": self.config.agent.max_output_tokens,
+            "tools": self._anthropic_tool_definitions(),
+            "messages": self._anthropic_messages(messages),
+        }
+        system_blocks = self._system_blocks()
+        if system_blocks:
+            body["system"] = system_blocks
+        if self.config.agent.thinking == "adaptive":
+            body["thinking"] = {"type": "adaptive"}
+        raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        req = request.Request(
+            self.api_base_url,
+            data=raw_body,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": ANTHROPIC_VERSION,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.config.agent.request_timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            message = f"{exc.code} {detail}".strip()
+            if exc.code in RETRYABLE_HTTP_CODES:
+                raise ModelRetryableError(message) from exc
+            raise ModelFatalError(message) from exc
+        except error.URLError as exc:
+            raise ModelRetryableError(str(exc)) from exc
+
+    def _system_blocks(self) -> list[dict[str, Any]]:
+        prompt = self._load_prompt()
+        if not prompt:
+            return []
+        block: dict[str, Any] = {"type": "text", "text": prompt}
+        if self.config.agent.enable_prompt_cache:
+            # Breakpoint on the last (only) system block caches tools + system as
+            # one prefix; the static prompt is byte-identical across every step.
+            block["cache_control"] = {"type": "ephemeral"}
+        return [block]
+
+    def _anthropic_tool_definitions(self) -> list[dict[str, Any]]:
+        definitions = []
+        for item in self._responses_tool_definitions():
+            definitions.append(
+                {
+                    "name": item["name"],
+                    "description": item["description"],
+                    "input_schema": item["parameters"],
+                }
+            )
+        return definitions
+
+    def _anthropic_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rendered: list[dict[str, Any]] = []
+        pending_tool_results: list[dict[str, Any]] = []
+
+        def flush_tool_results() -> None:
+            if pending_tool_results:
+                rendered.append({"role": "user", "content": list(pending_tool_results)})
+                pending_tool_results.clear()
+
+        for message in messages:
+            role = message.get("role")
+            if role == "user":
+                flush_tool_results()
+                rendered.append({"role": "user", "content": self._render_initial_turn([message])})
+            elif role == "assistant":
+                flush_tool_results()
+                rendered.append(self._assistant_message_blocks(message.get("content")))
+            elif role == "tool":
+                call_id = message.get("call_id")
+                if not call_id:
+                    continue
+                pending_tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": self._stringify_content(message.get("content")),
+                    }
+                )
+        flush_tool_results()
+        return rendered
+
+    def _assistant_message_blocks(self, content: Any) -> dict[str, Any]:
+        if isinstance(content, str):
+            return {"role": "assistant", "content": content or "(no content)"}
+        if not isinstance(content, dict):
+            return {"role": "assistant", "content": self._stringify_content(content)}
+        blocks: list[dict[str, Any]] = []
+        summary = content.get("decision_summary")
+        if isinstance(summary, str) and summary.strip():
+            blocks.append({"type": "text", "text": summary.strip()})
+        for tool_call in content.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": tool_call.get("call_id") or new_id("toolcall"),
+                    "name": tool_call.get("name", ""),
+                    "input": tool_call.get("input") or {},
+                }
+            )
+        if not blocks:
+            blocks.append({"type": "text", "text": "(no content)"})
+        return {"role": "assistant", "content": blocks}
+
+    def _stringify_content(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        return json.dumps(content, ensure_ascii=False)
+
+
 def build_model_adapter(config: SnowballConfig):
     if config.agent.provider == "heuristic":
         return HeuristicModelAdapter(config)
@@ -618,6 +827,8 @@ def build_model_adapter(config: SnowballConfig):
         return OpenAIResponsesAdapter(config)
     if config.agent.provider in {"deepseek_v3", "deepseek_chat"}:
         return DeepSeekChatCompletionsAdapter(config)
+    if config.agent.provider in {"anthropic", "anthropic_messages", "claude"}:
+        return AnthropicMessagesAdapter(config)
     if config.agent.model == "heuristic-v1":
         return HeuristicModelAdapter(config)
     raise RuntimeError(f"unsupported agent.provider: {config.agent.provider}")

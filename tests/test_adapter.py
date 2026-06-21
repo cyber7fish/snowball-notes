@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from snowball_notes.agent.adapter import (
+    AnthropicMessagesAdapter,
     DeepSeekChatCompletionsAdapter,
     HeuristicModelAdapter,
     OpenAIResponsesAdapter,
@@ -55,6 +56,30 @@ class StubDeepSeekChatCompletionsAdapter(DeepSeekChatCompletionsAdapter):
 
     def _request_payload(self, messages):
         self.calls.append(messages)
+        return self._payloads.pop(0)
+
+
+class StubAnthropicMessagesAdapter(AnthropicMessagesAdapter):
+    def __init__(self, config, payloads):
+        self._payloads = list(payloads)
+        self.bodies = []
+        super().__init__(config)
+
+    def _request_payload(self, messages):
+        # Capture the exact wire body the real adapter would POST, so tests can
+        # assert tool/system shape and prompt-cache placement without a network call.
+        body = {
+            "model": self.model_name,
+            "max_tokens": self.config.agent.max_output_tokens,
+            "tools": self._anthropic_tool_definitions(),
+            "messages": self._anthropic_messages(messages),
+        }
+        system_blocks = self._system_blocks()
+        if system_blocks:
+            body["system"] = system_blocks
+        if self.config.agent.thinking == "adaptive":
+            body["thinking"] = {"type": "adaptive"}
+        self.bodies.append(body)
         return self._payloads.pop(0)
 
 
@@ -239,6 +264,125 @@ class OpenAIAdapterTests(unittest.TestCase):
             self.assertEqual(rendered_messages[2]["tool_calls"][0]["id"], "call_1")
             self.assertEqual(rendered_messages[3]["role"], "tool")
             self.assertEqual(rendered_messages[3]["tool_call_id"], "call_1")
+
+
+class AnthropicAdapterTests(unittest.TestCase):
+    def test_messages_adapter_parses_tool_use_and_caches_system(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            config = default_config(Path(temp_dir))
+            config.agent.provider = "anthropic"
+            adapter = StubAnthropicMessagesAdapter(
+                config,
+                [
+                    {
+                        "id": "msg_1",
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 20, "output_tokens": 8, "cache_read_input_tokens": 0},
+                        "content": [
+                            {"type": "text", "text": "Search before deciding."},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "search_similar_notes",
+                                "input": {"query": "agent runtime", "top_k": 3},
+                            },
+                        ],
+                    },
+                ],
+            )
+            state = AgentState(
+                event=_sample_event(),
+                task_id="task_1",
+                trace_id="trace_1",
+                session_memory=SessionMemory(conversation_id="conv_test"),
+            )
+            messages = [
+                {
+                    "role": "user",
+                    "content": {
+                        "turn_id": "turn_test",
+                        "user_message": "How should I build a guarded agent runtime?",
+                        "assistant_final_answer": "Use proposals, guardrails, and replay bundles.",
+                        "source_confidence": 0.92,
+                        "previous_turns": 0,
+                        "session_context": "No prior turns from this conversation have been processed yet.",
+                        "recent_actions": [],
+                    },
+                }
+            ]
+
+            response = adapter.respond(state.event, state, messages, {}, 0)
+            self.assertEqual(response.stop_reason, "tool_use")
+            self.assertEqual(response.provider_response_id, "msg_1")
+            self.assertEqual(response.tool_use_blocks[0].name, "search_similar_notes")
+            self.assertEqual(response.tool_use_blocks[0].input["top_k"], 3)
+            self.assertEqual(response.decision_summary, "Search before deciding.")
+            self.assertEqual(response.usage.input_tokens, 20)
+
+            body = adapter.bodies[0]
+            self.assertEqual(body["model"], "claude-opus-4-8")
+            # System prompt carries a cache breakpoint (tools render before it, so
+            # tools + system cache together).
+            self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
+            # Tools use Anthropic's input_schema shape, not OpenAI's parameters.
+            self.assertIn("input_schema", body["tools"][0])
+
+    def test_messages_adapter_rebuilds_tool_result_turns(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            config = default_config(Path(temp_dir))
+            config.agent.provider = "claude"
+            adapter = StubAnthropicMessagesAdapter(
+                config,
+                [
+                    {
+                        "id": "msg_2",
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 30, "output_tokens": 5},
+                        "content": [{"type": "text", "text": "The turn can end safely."}],
+                    }
+                ],
+            )
+            state = AgentState(
+                event=_sample_event(),
+                task_id="task_1",
+                trace_id="trace_1",
+                session_memory=SessionMemory(conversation_id="conv_test"),
+            )
+            messages = [
+                {"role": "user", "content": {"turn_id": "turn_test", "user_message": "u", "assistant_final_answer": "a"}},
+                {
+                    "role": "assistant",
+                    "content": {
+                        "decision_summary": "Read the candidate note.",
+                        "stop_reason": "tool_use",
+                        "tool_calls": [{"call_id": "toolu_1", "name": "read_note", "input": {"note_id": "note_123"}}],
+                    },
+                },
+                {"role": "tool", "call_id": "toolu_1", "name": "read_note", "content": {"note_id": "note_123"}},
+            ]
+
+            response = adapter.respond(state.event, state, messages, {}, 1)
+            self.assertEqual(response.stop_reason, "end_turn")
+
+            rendered = adapter.bodies[0]["messages"]
+            self.assertEqual(rendered[0]["role"], "user")
+            self.assertEqual(rendered[1]["role"], "assistant")
+            tool_use_block = rendered[1]["content"][-1]
+            self.assertEqual(tool_use_block["type"], "tool_use")
+            self.assertEqual(tool_use_block["id"], "toolu_1")
+            # Tool output becomes a tool_result block inside a following user turn.
+            self.assertEqual(rendered[2]["role"], "user")
+            self.assertEqual(rendered[2]["content"][0]["type"], "tool_result")
+            self.assertEqual(rendered[2]["content"][0]["tool_use_id"], "toolu_1")
+
+    def test_build_model_adapter_selects_anthropic(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            config = default_config(Path(temp_dir))
+            config.agent.provider = "anthropic"
+            adapter = build_model_adapter(config)
+            self.assertIsInstance(adapter, AnthropicMessagesAdapter)
+            self.assertEqual(adapter.model_name, "claude-opus-4-8")
+            self.assertEqual(adapter.api_base_url, "https://api.anthropic.com/v1/messages")
 
 
 if __name__ == "__main__":
