@@ -53,6 +53,9 @@ class AgentConfig:
     max_output_tokens: int = 4096
     enable_prompt_cache: bool = True
     thinking: str = "off"
+    enable_context_budget: bool = True
+    max_tool_result_chars: int = 16000
+    keep_recent_tool_results: int = 2
 
 
 @dataclass

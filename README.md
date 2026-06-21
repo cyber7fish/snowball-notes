@@ -146,6 +146,18 @@ Exact substring match in the title triggers a hard boost to ≥ 0.92, ensuring o
 
 Search results are also frozen into `AgentState.knowledge_snapshot_refs` at call time, giving the `ReplayBundle` a content-hash snapshot of every note that was visible during the original run.
 
+## Context Management
+
+The agent re-sends its full message history to the model on every ReAct step, so large read-only tool outputs (note searches, note bodies) accumulate and inflate every subsequent request. A **tool-result budget** caps their aggregate size, modeled on Claude Code's `applyToolResultBudget` + `ContentReplacementState`:
+
+- Before each model call, the aggregate size of *compactable* tool results (`search_similar_notes`, `read_note`) is measured. `assess` / `extract` and the action/flag tools are load-bearing and never cleared.
+- When over `max_tool_result_chars`, the **largest** results are replaced with a compact placeholder, oldest-first on ties, until the total fits — but the most recent `keep_recent_tool_results` are always preserved (the agent is most likely still reasoning over them).
+- Replacement decisions are **frozen** in `AgentState.replacement_state`: once a result is cleared it stays cleared, and re-applying the budget to the same prefix yields byte-identical output.
+
+That last property is the point. The Anthropic adapter caches the system prefix (`cache_control`), and any prefix cache is invalidated by a single changed byte earlier in the request. A naive "summarize the history" pass would rewrite earlier bytes every turn and silently destroy the cache hit; freezing the decision keeps the trimmed prefix stable so the cache survives. The full history is retained in `messages` and the `ReplayBundle` — only the model-facing copy is trimmed, so replay still sees the original tool outputs.
+
+Knobs (all on `agent` in `config.yaml`): `enable_context_budget` (default `true`), `max_tool_result_chars` (default `16000`), `keep_recent_tool_results` (default `2`). When clearing occurs, a `context_budget_applied` row is written to `audit_logs` with the cleared count and characters saved.
+
 ## Tools
 
 The agent has 9 tools organized into two categories.
