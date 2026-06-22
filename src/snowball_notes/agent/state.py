@@ -23,3 +23,4 @@ class AgentState:
     tool_context: dict[str, list[Any]] = field(default_factory=dict)
     model_context: dict[str, Any] = field(default_factory=dict)
     replacement_state: ContentReplacementState = field(default_factory=ContentReplacementState)
+    recovery_events: list[dict[str, Any]] = field(default_factory=list)

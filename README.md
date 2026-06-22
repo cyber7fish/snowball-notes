@@ -158,14 +158,25 @@ That last property is the point. The Anthropic adapter places two cache breakpoi
 
 Knobs (all on `agent` in `config.yaml`): `enable_context_budget` (default `true`), `max_tool_result_chars` (default `16000`), `keep_recent_tool_results` (default `2`). When clearing occurs, a `context_budget_applied` row is written to `audit_logs` with the cleared count and characters saved.
 
+### Recovery gradient
+
+The budget is the cheap, cache-preserving floor. A long, tool-heavy turn can still outgrow the context window even after it runs, so `context_recovery.py` adds the next levels of Claude Code's recovery gradient, escalating only as the (tokenizer-free) `chars/4` estimate crosses each limit:
+
+1. **microcompact** — the frozen tool-result budget above. Cache-preserving; measured by `context_chars_cleared`.
+2. **history_compaction** — past `compact_token_soft_limit`, fold all but the most recent `keep_recent_turns` ReAct exchanges into one digest of the decisions, tool outcomes, and proposals so far, keeping recent turns verbatim.
+3. **full_summarize** — past `compact_token_hard_limit`, collapse the whole turn to the original task plus a single summary and continue from there.
+
+Levels 2–3 deliberately rewrite the prefix, so they bust the prompt cache — that is the cost of reclaiming context room, and the gradient pays it only when the cache-preserving level is not enough. The digests are built **mechanically** from the structured message history (each assistant message already carries `decision_summary`; tool results are dicts), so recovery stays deterministic and fully offline — no extra model call, and replay still sees the original, uncompacted tool outputs. Knobs (on `agent`): `enable_context_recovery` (default `true`), `compact_token_soft_limit` (`12000`), `compact_token_hard_limit` (`20000`), `keep_recent_turns` (`2`). Each compaction appends to `AgentState.recovery_events` and a `context_recovery_applied` audit row records the level and before/after token estimates.
+
 ### Observability
 
-Both mechanisms are measured, not just implemented. Each `AgentTrace` records `total_cache_read_input_tokens` (summed from the model's `usage.cache_read_input_tokens`) and `context_chars_cleared` (from the frozen replacement decision), and both are persisted to the `agent_traces` table. `snowball status` surfaces them in a `context_management` section:
+Every mechanism is measured, not just implemented. Each `AgentTrace` records `total_cache_read_input_tokens` (summed from the model's `usage.cache_read_input_tokens`), `context_chars_cleared` (from the frozen replacement decision), and `context_recoveries` (count of L2/L3 compactions), all persisted to the `agent_traces` table. `snowball status` surfaces them in a `context_management` section:
 
 - **`cache_read_rate`** — cache-read tokens / (uncached input + cache-read tokens) over the window. This is the payoff metric for the prefix-caching design: a healthy multi-step run trends high because every step after the first reads the conversation prefix from cache.
 - **`context_chars_cleared`** — total characters trimmed from model-facing tool results by the budget, i.e. how much context pressure the budget actually relieved.
+- **`context_recoveries`** — how often the harder, cache-busting recovery levels had to fire; ideally low, because most pressure is absorbed by the cheap budget.
 
-With the offline `heuristic` adapter both read `0` (no live API, nothing cached, results small) and render gracefully; they become meaningful under a real provider.
+With the offline `heuristic` adapter these read `0` (no live API, nothing cached, turns small) and render gracefully; they become meaningful under a real provider.
 
 ## Tools
 
@@ -218,6 +229,7 @@ agent_health:
 context_management:
   cache_read_rate: 71.3% (118204 cached input tokens)
   context_chars_cleared: 86310
+  context_recoveries: 2
 review:
   review_rate: 7.1% (3/42)
   pending_reviews: 1

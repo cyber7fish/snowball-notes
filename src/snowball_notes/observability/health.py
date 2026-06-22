@@ -51,7 +51,7 @@ def collect_agent_health(db, window_days: int = 7) -> dict[str, Any]:
             """
             SELECT created_at, final_decision, total_steps, total_duration_ms,
                    total_input_tokens, total_output_tokens, total_cache_read_input_tokens,
-                   context_chars_cleared, exceeded_max_steps, trace_json
+                   context_chars_cleared, context_recoveries, exceeded_max_steps, trace_json
             FROM agent_traces
             ORDER BY created_at DESC
             """
@@ -92,6 +92,7 @@ def collect_agent_health(db, window_days: int = 7) -> dict[str, Any]:
     total_input_tokens = sum(int(row["total_input_tokens"] or 0) for row in trace_rows)
     total_cache_read_tokens = sum(int(row["total_cache_read_input_tokens"] or 0) for row in trace_rows)
     total_context_chars_cleared = sum(int(row["context_chars_cleared"] or 0) for row in trace_rows)
+    total_context_recoveries = sum(int(row["context_recoveries"] or 0) for row in trace_rows)
     # Cache hit rate over input tokens: cache reads / (uncached input + cache reads).
     cacheable_input = total_input_tokens + total_cache_read_tokens
     exceeded_max_steps = sum(int(row["exceeded_max_steps"] or 0) for row in trace_rows)
@@ -127,6 +128,7 @@ def collect_agent_health(db, window_days: int = 7) -> dict[str, Any]:
         "cache_read_tokens": total_cache_read_tokens,
         "cache_read_rate": (total_cache_read_tokens / cacheable_input) if cacheable_input else None,
         "context_chars_cleared": total_context_chars_cleared,
+        "context_recoveries": total_context_recoveries,
         "max_steps_exceeded_count": exceeded_max_steps,
         "max_steps_exceeded_rate": (exceeded_max_steps / agent_runs) if agent_runs else None,
         "tool_call_count": tool_calls,

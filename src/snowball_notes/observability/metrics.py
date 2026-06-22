@@ -51,6 +51,7 @@ def render_status(db, window_days: int = 7) -> str:
         f"({agent_health['cache_read_tokens']} cached input tokens)"
     )
     lines.append(f"  context_chars_cleared: {agent_health['context_chars_cleared']}")
+    lines.append(f"  context_recoveries: {agent_health['context_recoveries']}")
 
     lines.append("review:")
     lines.append(

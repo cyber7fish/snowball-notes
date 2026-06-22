@@ -228,6 +228,7 @@ class AgentTrace:
     total_cache_read_input_tokens: int = 0
     total_duration_ms: int = 0
     context_chars_cleared: int = 0
+    context_recoveries: int = 0
     steps: list[TraceStep] = field(default_factory=list)
 
     def record_step(
@@ -293,6 +294,7 @@ class AgentTrace:
             "total_cache_read_input_tokens": self.total_cache_read_input_tokens,
             "total_duration_ms": self.total_duration_ms,
             "context_chars_cleared": self.context_chars_cleared,
+            "context_recoveries": self.context_recoveries,
             "steps": [step.to_dict() for step in self.steps],
         }
 

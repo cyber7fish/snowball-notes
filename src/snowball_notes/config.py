@@ -56,6 +56,10 @@ class AgentConfig:
     enable_context_budget: bool = True
     max_tool_result_chars: int = 16000
     keep_recent_tool_results: int = 2
+    enable_context_recovery: bool = True
+    compact_token_soft_limit: int = 12000
+    compact_token_hard_limit: int = 20000
+    keep_recent_turns: int = 2
 
 
 @dataclass

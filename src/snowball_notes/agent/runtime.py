@@ -10,6 +10,7 @@ from ..storage.audit import write_audit_log
 from .adapter import ModelRetryableError
 from .commit import Committer
 from .context_budget import apply_tool_result_budget
+from .context_recovery import recover_context
 from .guardrails import check_guardrail
 from .memory import load_session_memory, update_session_memory
 from .state import AgentState
@@ -44,7 +45,7 @@ class SnowballAgent:
         try:
             transition_state(self.db, task.task_id, RunState.PREPARED, RunState.RUNNING)
             for step_index in range(self.config.agent.max_steps):
-                messages_for_model = self._budget_messages(messages, state)
+                messages_for_model = self._recover_context(messages, state, step_index)
                 response = self._respond_with_retry(event, state, messages_for_model, step_index)
                 state.model_context.pop("next_input_items", None)
                 if response.provider_response_id:
@@ -274,6 +275,18 @@ class SnowballAgent:
             keep_recent=self.config.agent.keep_recent_tool_results,
         )
 
+    def _recover_context(self, messages: list[dict], state: AgentState, step_index: int) -> list[dict]:
+        # Escalating recovery gradient: the cache-preserving tool-result budget
+        # first, then history compaction / full summarization when the token
+        # estimate exceeds the configured limits. Only the model-facing copy is
+        # affected; the full history stays in `messages` and the replay bundle.
+        return recover_context(
+            messages,
+            state,
+            config=self.config,
+            step_index=step_index,
+        )
+
     def _advance_messages(self, messages: list[dict], response, tool_messages: list[dict]) -> list[dict]:
         assistant_message = {
             "role": "assistant",
@@ -365,6 +378,7 @@ class SnowballAgent:
 
     def _persist_trace_and_replay(self, trace, state) -> None:
         trace.context_chars_cleared = state.replacement_state.chars_cleared
+        trace.context_recoveries = len(state.recovery_events)
         save_agent_trace(self.db, trace)
         if state.replacement_state.was_applied():
             write_audit_log(
@@ -374,6 +388,17 @@ class SnowballAgent:
                     "cleared_tool_results": len(state.replacement_state.cleared_call_ids),
                     "chars_cleared": state.replacement_state.chars_cleared,
                     "max_tool_result_chars": self.config.agent.max_tool_result_chars,
+                },
+                trace_id=trace.trace_id,
+                turn_id=state.event.turn_id,
+            )
+        if state.recovery_events:
+            write_audit_log(
+                self.db,
+                "context_recovery_applied",
+                {
+                    "recoveries": len(state.recovery_events),
+                    "events": state.recovery_events,
                 },
                 trace_id=trace.trace_id,
                 turn_id=state.event.turn_id,
