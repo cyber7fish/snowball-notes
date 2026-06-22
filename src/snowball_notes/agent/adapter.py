@@ -673,17 +673,14 @@ class AnthropicMessagesAdapter(_ToolAwareAdapter):
                 if isinstance(text, str) and text.strip():
                     text_parts.append(text.strip())
         usage_payload = payload.get("usage") or {}
-        # Report total prompt size (uncached + cache read + cache write) so the
-        # eval's token metrics reflect real context, and cache savings show up as
-        # the gap between billed and total input.
-        input_tokens = (
-            int(usage_payload.get("input_tokens") or 0)
-            + int(usage_payload.get("cache_read_input_tokens") or 0)
-            + int(usage_payload.get("cache_creation_input_tokens") or 0)
-        )
+        # Keep the three input classes separate so cache savings are measurable:
+        # input_tokens is the full-price uncached remainder; cache reads/writes are
+        # tracked on their own. Total prompt size = input + cache_read + cache_write.
         usage = TokenUsage(
-            input_tokens=input_tokens,
+            input_tokens=int(usage_payload.get("input_tokens") or 0),
             output_tokens=int(usage_payload.get("output_tokens") or 0),
+            cache_read_input_tokens=int(usage_payload.get("cache_read_input_tokens") or 0),
+            cache_creation_input_tokens=int(usage_payload.get("cache_creation_input_tokens") or 0),
         )
         stop_reason = "tool_use" if function_calls else "end_turn"
         decision_summary = " ".join(text_parts).strip()

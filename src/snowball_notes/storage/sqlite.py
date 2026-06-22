@@ -102,7 +102,9 @@ CREATE TABLE IF NOT EXISTS agent_traces (
   final_confidence REAL,
   total_input_tokens INTEGER,
   total_output_tokens INTEGER,
+  total_cache_read_input_tokens INTEGER DEFAULT 0,
   total_duration_ms INTEGER,
+  context_chars_cleared INTEGER DEFAULT 0,
   trace_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -238,6 +240,8 @@ class Database:
         self._ensure_column("review_actions", "suggested_action", "TEXT")
         self._ensure_column("review_actions", "suggested_target_note_id", "TEXT")
         self._ensure_column("review_actions", "suggested_payload_json", "TEXT")
+        self._ensure_column("agent_traces", "total_cache_read_input_tokens", "INTEGER DEFAULT 0")
+        self._ensure_column("agent_traces", "context_chars_cleared", "INTEGER DEFAULT 0")
         self._connection.commit()
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:

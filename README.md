@@ -158,6 +158,15 @@ That last property is the point. The Anthropic adapter places two cache breakpoi
 
 Knobs (all on `agent` in `config.yaml`): `enable_context_budget` (default `true`), `max_tool_result_chars` (default `16000`), `keep_recent_tool_results` (default `2`). When clearing occurs, a `context_budget_applied` row is written to `audit_logs` with the cleared count and characters saved.
 
+### Observability
+
+Both mechanisms are measured, not just implemented. Each `AgentTrace` records `total_cache_read_input_tokens` (summed from the model's `usage.cache_read_input_tokens`) and `context_chars_cleared` (from the frozen replacement decision), and both are persisted to the `agent_traces` table. `snowball status` surfaces them in a `context_management` section:
+
+- **`cache_read_rate`** — cache-read tokens / (uncached input + cache-read tokens) over the window. This is the payoff metric for the prefix-caching design: a healthy multi-step run trends high because every step after the first reads the conversation prefix from cache.
+- **`context_chars_cleared`** — total characters trimmed from model-facing tool results by the budget, i.e. how much context pressure the budget actually relieved.
+
+With the offline `heuristic` adapter both read `0` (no live API, nothing cached, results small) and render gracefully; they become meaningful under a real provider.
+
 ## Tools
 
 The agent has 9 tools organized into two categories.
@@ -188,13 +197,39 @@ Action tools produce no vault or DB side effects during the ReAct loop — they 
 ### `snowball status` output
 
 ```
-Agent health (last 7 days):
-  Runs: 42  Completed: 38  Flagged: 3  Failed: 1
-  Avg steps/run: 3.8   Avg tokens: 412
-  Write rate: 68%   Flag rate: 7%
-Parser health:
-  Events parsed: 156   Avg confidence: 0.87
-  Below threshold: 12 (7.7%)
+Snowball Status (7d)
+----------------------
+processed_runs: 42
+task_states:
+  completed: 38
+  flagged: 3
+decisions:
+  create_note: 30
+  append_note: 8
+  flagged: 3
+agent_health:
+  avg_steps: 3.80
+  max_steps_exceeded: 0 (0.0%)
+  tool_error_rate: 1.2% (3/248)
+  guardrail_block_rate: 0.4% (1/248)
+  commit_rejection_rate: 2.4% (1/42)
+  avg_duration_ms: 1840.00
+  avg_tokens_per_run: 412.00
+context_management:
+  cache_read_rate: 71.3% (118204 cached input tokens)
+  context_chars_cleared: 86310
+review:
+  review_rate: 7.1% (3/42)
+  pending_reviews: 1
+  acceptance_rate: 66.7% (2 resolved)
+parser_health:
+  avg_confidence_last_50: 0.87
+  low_confidence_rate_last_50: 7.7% (12/50)
+reconcile:
+  last_run: 2026-06-20 09:14:02
+  last_result: ok
+  orphan_files: 0
+  missing_files: 0
 ```
 
 ### Eval: Heuristic vs DeepSeek (25 cases, 6 decision types)

@@ -364,6 +364,7 @@ class SnowballAgent:
         return "\n".join(lines)
 
     def _persist_trace_and_replay(self, trace, state) -> None:
+        trace.context_chars_cleared = state.replacement_state.chars_cleared
         save_agent_trace(self.db, trace)
         if state.replacement_state.was_applied():
             write_audit_log(
