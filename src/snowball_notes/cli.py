@@ -10,6 +10,8 @@ from .agent.orchestrator import SnowballWorker
 from .agent.replay import ReplayRunner
 from .agent.runtime import SnowballAgent
 from .agent.tools import build_tool_registry
+from .benchmarks.context import format_table as format_context_benchmark
+from .benchmarks.context import run_benchmark as run_context_benchmark
 from .calibrate.confidence_feedback import (
     HUMAN_LABELS,
     analyze_confidence_calibration,
@@ -115,6 +117,14 @@ def main(argv: list[str] | None = None) -> int:
     demo_subparsers = demo_parser.add_subparsers(dest="demo_command", required=True)
     demo_setup_parser = demo_subparsers.add_parser("setup")
     demo_setup_parser.add_argument("--dest", default="./demo-workspace")
+    bench_parser = subparsers.add_parser("bench")
+    bench_subparsers = bench_parser.add_subparsers(dest="bench_command", required=True)
+    bench_context_parser = bench_subparsers.add_parser("context")
+    bench_context_parser.add_argument("--steps", type=int, default=6)
+    bench_context_parser.add_argument("--tool-result-size", type=int, default=1500)
+    bench_context_parser.add_argument("--max-tool-result-chars", type=int, default=16000)
+    bench_context_parser.add_argument("--keep-recent-tool-results", type=int, default=2)
+    bench_context_parser.add_argument("--format", choices=["table", "json"], default="table")
     calibrate_parser = subparsers.add_parser("calibrate")
     calibrate_subparsers = calibrate_parser.add_subparsers(dest="calibrate_command", required=True)
     feedback_parser = calibrate_subparsers.add_parser("add-feedback")
@@ -128,6 +138,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.demo_command == "setup":
             payload = setup_demo_workspace(args.dest)
             print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+    if args.command == "bench":
+        if args.bench_command == "context":
+            results = run_context_benchmark(
+                steps=args.steps,
+                tool_result_size=args.tool_result_size,
+                max_tool_result_chars=args.max_tool_result_chars,
+                keep_recent_tool_results=args.keep_recent_tool_results,
+            )
+            if args.format == "json":
+                print(json.dumps([result.to_dict() for result in results], ensure_ascii=False, indent=2))
+            else:
+                print(format_context_benchmark(
+                    results,
+                    steps=args.steps,
+                    tool_result_size=args.tool_result_size,
+                ))
             return 0
     config, db, vault, worker = build_runtime(args.config_path, build_worker=args.command == "worker")
     try:

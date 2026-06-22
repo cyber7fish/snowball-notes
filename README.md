@@ -244,6 +244,37 @@ reconcile:
   missing_files: 0
 ```
 
+### Context-engineering benchmark
+
+`snowball bench context` simulates the exact message list `SnowballAgent` would send to a real model on every step, then measures bytes — once with the optimizations on, once with them off — and reconstructs the cache-hit accounting the same way the Anthropic API does (longest byte-identical message prefix between consecutive requests). It needs no API key and no live model: heuristic and stub adapters return hard-coded token counts, so this is the only honest way to show what the budget and prefix cache are actually worth.
+
+**Bounded turn — 6 steps, ~1500-char tool excerpts** (typical retrieval-heavy run):
+
+| config | fresh tokens | cache reads | cache rate | savings vs baseline | peak step tokens |
+|---|---:|---:|---:|---:|---:|
+| baseline | 25,770 | 0 | 0.0% | 0.0% | 7,345 |
+| budget_only | 18,833 | 0 | 0.0% | 26.9% | 3,877 |
+| cache_only | 7,345 | 18,425 | **71.5%** | **71.5%** | 7,345 |
+| budget_and_cache | 14,729 | 4,103 | 21.8% | 42.8% | 3,877 |
+
+**Stress turn — 12 steps, ~6000-char tool excerpts** (deep retrieval, long note bodies):
+
+| config | fresh tokens | cache reads | cache rate | savings vs baseline | peak step tokens |
+|---|---:|---:|---:|---:|---:|
+| baseline | 358,734 | 0 | 0.0% | 0.0% | **55,174** ⚠️ |
+| budget_only | 109,513 | 0 | 0.0% | 69.5% | 9,860 |
+| cache_only | 55,174 | 303,560 | **84.6%** | **84.6%** | **55,174** ⚠️ |
+| budget_and_cache | 101,338 | 8,175 | 7.5% | 71.8% | **9,860** |
+
+**Reading the tables** — the two layers solve different problems and pull in different directions:
+
+- **Prefix caching** dominates on *cumulative* cost. As long as the request prefix is byte-stable across steps, every step after the first reads it for free, so total fresh input grows almost linearly with output size, not input size. At small scale this captures most of the win.
+- **The tool-result budget** is what bounds *peak single-step pressure* — the column that decides whether you fit in the context window at all. `cache_only` saves on billing but still tries to send 55K tokens in one step on the stress run; that's the request that throws `400: max_tokens_to_sample exceeded` on a real run.
+- **Frozen replacement decisions** are the bridge: once the budget clears a result, those bytes stay cleared, so the prefix re-stabilizes and the cache rebuilds. That is why `budget_and_cache` keeps 71.8% savings at peak load even though its cache rate drops — it's preserving cache *after* the clearing events.
+- The cost of the budget at small scale is real: in the bounded run, `budget_and_cache` (42.8%) trails `cache_only` (71.5%) because every clearing event invalidates an earlier message. The shipped configuration accepts that tradeoff to stay safe under unbounded tool outputs, which is exactly the regime the [recovery gradient](#recovery-gradient) is built for.
+
+Reproduce: `snowball bench context [--steps N --tool-result-size S]`.
+
 ### Eval: Heuristic vs DeepSeek (25 cases, 6 decision types)
 
 | Metric | Heuristic (offline) | DeepSeek-V3 |
