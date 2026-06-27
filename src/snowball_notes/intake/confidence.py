@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 CURRENT_STABLE_PARSER = "v1"
 MAX_CONFIDENCE_SCORE = 1.0
 MIN_CONFIDENCE_SCORE = 0.0

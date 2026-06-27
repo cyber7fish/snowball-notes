@@ -8,7 +8,6 @@ from snowball_notes.storage.sqlite import Database
 from snowball_notes.storage.vault import Vault
 from snowball_notes.utils import now_utc_iso
 
-
 SEED_NOTES = [
     {
         "note_id": "note_seed_kv_cache",

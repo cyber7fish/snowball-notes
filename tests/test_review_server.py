@@ -8,11 +8,11 @@ from snowball_notes.models import StandardEvent
 from snowball_notes.storage.sqlite import Database
 from snowball_notes.utils import now_utc_iso
 
-
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 if FASTAPI_AVAILABLE:
     from fastapi.testclient import TestClient
+
     from snowball_notes.config import load_config
     from snowball_notes.review.server import build_review_app
 

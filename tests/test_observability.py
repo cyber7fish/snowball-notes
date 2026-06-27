@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from snowball_notes.observability.health import collect_agent_health
 from snowball_notes.observability.metrics import render_status
 from snowball_notes.storage.audit import write_audit_log
 from snowball_notes.storage.sqlite import Database
@@ -145,6 +146,62 @@ class ObservabilityStatusTests(unittest.TestCase):
             self.assertIn("avg_confidence_last_50: 0.65", rendered)
             self.assertIn("low_confidence_rate_last_50: 50.0% (1/2)", rendered)
             self.assertIn("last_result: ok", rendered)
+            db.close()
+
+
+class ContextManagementMetricsTests(unittest.TestCase):
+    def test_cache_and_context_budget_metrics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Database(Path(temp_dir) / "snowball.db")
+            db.migrate()
+            now = now_utc_iso()
+            # Two runs: 600 uncached + 400 cached input tokens => cache_read_rate 40%.
+            traces = [
+                ("trace_1", "turn_1", "evt_1", 400, 300, 9000),
+                ("trace_2", "turn_2", "evt_2", 200, 100, 3500),
+            ]
+            for trace_id, turn_id, event_id, in_tokens, cache_read, chars_cleared in traces:
+                db.execute(
+                    """
+                    INSERT INTO agent_traces (
+                      trace_id, turn_id, event_id, prompt_version, model_name, started_at,
+                      finished_at, total_steps, exceeded_max_steps, terminal_reason,
+                      final_decision, final_confidence, total_input_tokens, total_output_tokens,
+                      total_cache_read_input_tokens, total_duration_ms, context_chars_cleared,
+                      trace_json
+                    ) VALUES (?, ?, ?, 'agent_system/v1.md', 'claude-opus-4-8', ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        trace_id,
+                        turn_id,
+                        event_id,
+                        now,
+                        now,
+                        2,
+                        0,
+                        "completed",
+                        "create_note",
+                        0.9,
+                        in_tokens,
+                        50,
+                        cache_read,
+                        1000,
+                        chars_cleared,
+                        json.dumps({"steps": []}),
+                    ),
+                )
+
+            health = collect_agent_health(db, window_days=7)
+            self.assertEqual(health["cache_read_tokens"], 400)
+            # 400 cache reads / (600 uncached + 400 cache reads) = 0.40
+            self.assertAlmostEqual(health["cache_read_rate"], 0.4)
+            self.assertEqual(health["context_chars_cleared"], 12500)
+
+            rendered = render_status(db, window_days=7)
+            self.assertIn("context_management:", rendered)
+            self.assertIn("cache_read_rate: 40.0% (400 cached input tokens)", rendered)
+            self.assertIn("context_chars_cleared: 12500", rendered)
             db.close()
 
 

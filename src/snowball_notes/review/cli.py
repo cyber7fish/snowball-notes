@@ -17,7 +17,6 @@ from ..models import ActionProposal, StandardEvent
 from ..storage.audit import write_audit_log
 from ..utils import new_id, now_utc_iso, sha256_text
 
-
 REVIEW_ACTION_ALIASES = {
     "create": "create_note",
     "create_note": "create_note",
@@ -500,7 +499,8 @@ def _finalize_approved_review(
                 )
     if action_type == "link_notes":
         source_note_id = review_row.get("final_target_note_id") or _suggested_target_note_id(review_row)
-        target_note_id = _snapshot_payload(review_row).get("target_note_id") if _snapshot_payload(review_row) else None
+        snapshot_payload = _snapshot_payload(review_row)
+        target_note_id = snapshot_payload.get("target_note_id") if snapshot_payload else None
         for note_id in [source_note_id, target_note_id]:
             if not note_id or note_id in related_note_ids:
                 continue

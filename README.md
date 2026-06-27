@@ -1,5 +1,7 @@
 # Snowball Notes
 
+[![CI](https://github.com/cyber7fish/snowball-notes/actions/workflows/ci.yml/badge.svg)](https://github.com/cyber7fish/snowball-notes/actions/workflows/ci.yml)
+
 An autonomous agent that curates AI conversation turns into a reviewable Obsidian knowledge base — with controlled side effects, full traceability, and deterministic replay.
 
 ## The Problem
@@ -144,6 +146,38 @@ Exact substring match in the title triggers a hard boost to ≥ 0.92, ensuring o
 
 Search results are also frozen into `AgentState.knowledge_snapshot_refs` at call time, giving the `ReplayBundle` a content-hash snapshot of every note that was visible during the original run.
 
+## Context Management
+
+The agent re-sends its full message history to the model on every ReAct step, so large read-only tool outputs (note searches, note bodies) accumulate and inflate every subsequent request. A **tool-result budget** caps their aggregate size, modeled on Claude Code's `applyToolResultBudget` + `ContentReplacementState`:
+
+- Before each model call, the aggregate size of *compactable* tool results (`search_similar_notes`, `read_note`) is measured. `assess` / `extract` and the action/flag tools are load-bearing and never cleared.
+- When over `max_tool_result_chars`, the **largest** results are replaced with a compact placeholder, oldest-first on ties, until the total fits — but the most recent `keep_recent_tool_results` are always preserved (the agent is most likely still reasoning over them).
+- Replacement decisions are **frozen** in `AgentState.replacement_state`: once a result is cleared it stays cleared, and re-applying the budget to the same prefix yields byte-identical output.
+
+That last property is the point. The Anthropic adapter places two cache breakpoints — one on the static system prefix, one on the last block of the most recent turn — so each ReAct step reads the entire prior conversation from cache and pays full price only for the newest turn. Any prefix cache is invalidated by a single changed byte earlier in the request, so this only works because earlier blocks are byte-stable: a naive "summarize the history" pass would rewrite earlier bytes every turn and silently destroy the cache hit, whereas freezing the budget decision keeps the trimmed prefix stable. The full history is retained in `messages` and the `ReplayBundle` — only the model-facing copy is trimmed, so replay still sees the original tool outputs.
+
+Knobs (all on `agent` in `config.yaml`): `enable_context_budget` (default `true`), `max_tool_result_chars` (default `16000`), `keep_recent_tool_results` (default `2`). When clearing occurs, a `context_budget_applied` row is written to `audit_logs` with the cleared count and characters saved.
+
+### Recovery gradient
+
+The budget is the cheap, cache-preserving floor. A long, tool-heavy turn can still outgrow the context window even after it runs, so `context_recovery.py` adds the next levels of Claude Code's recovery gradient, escalating only as the (tokenizer-free) `chars/4` estimate crosses each limit:
+
+1. **microcompact** — the frozen tool-result budget above. Cache-preserving; measured by `context_chars_cleared`.
+2. **history_compaction** — past `compact_token_soft_limit`, fold all but the most recent `keep_recent_turns` ReAct exchanges into one digest of the decisions, tool outcomes, and proposals so far, keeping recent turns verbatim.
+3. **full_summarize** — past `compact_token_hard_limit`, collapse the whole turn to the original task plus a single summary and continue from there.
+
+Levels 2–3 deliberately rewrite the prefix, so they bust the prompt cache — that is the cost of reclaiming context room, and the gradient pays it only when the cache-preserving level is not enough. The digests are built **mechanically** from the structured message history (each assistant message already carries `decision_summary`; tool results are dicts), so recovery stays deterministic and fully offline — no extra model call, and replay still sees the original, uncompacted tool outputs. Knobs (on `agent`): `enable_context_recovery` (default `true`), `compact_token_soft_limit` (`12000`), `compact_token_hard_limit` (`20000`), `keep_recent_turns` (`2`). Each compaction appends to `AgentState.recovery_events` and a `context_recovery_applied` audit row records the level and before/after token estimates.
+
+### Observability
+
+Every mechanism is measured, not just implemented. Each `AgentTrace` records `total_cache_read_input_tokens` (summed from the model's `usage.cache_read_input_tokens`), `context_chars_cleared` (from the frozen replacement decision), and `context_recoveries` (count of L2/L3 compactions), all persisted to the `agent_traces` table. `snowball status` surfaces them in a `context_management` section:
+
+- **`cache_read_rate`** — cache-read tokens / (uncached input + cache-read tokens) over the window. This is the payoff metric for the prefix-caching design: a healthy multi-step run trends high because every step after the first reads the conversation prefix from cache.
+- **`context_chars_cleared`** — total characters trimmed from model-facing tool results by the budget, i.e. how much context pressure the budget actually relieved.
+- **`context_recoveries`** — how often the harder, cache-busting recovery levels had to fire; ideally low, because most pressure is absorbed by the cheap budget.
+
+With the offline `heuristic` adapter these read `0` (no live API, nothing cached, turns small) and render gracefully; they become meaningful under a real provider.
+
 ## Tools
 
 The agent has 9 tools organized into two categories.
@@ -174,14 +208,72 @@ Action tools produce no vault or DB side effects during the ReAct loop — they 
 ### `snowball status` output
 
 ```
-Agent health (last 7 days):
-  Runs: 42  Completed: 38  Flagged: 3  Failed: 1
-  Avg steps/run: 3.8   Avg tokens: 412
-  Write rate: 68%   Flag rate: 7%
-Parser health:
-  Events parsed: 156   Avg confidence: 0.87
-  Below threshold: 12 (7.7%)
+Snowball Status (7d)
+----------------------
+processed_runs: 42
+task_states:
+  completed: 38
+  flagged: 3
+decisions:
+  create_note: 30
+  append_note: 8
+  flagged: 3
+agent_health:
+  avg_steps: 3.80
+  max_steps_exceeded: 0 (0.0%)
+  tool_error_rate: 1.2% (3/248)
+  guardrail_block_rate: 0.4% (1/248)
+  commit_rejection_rate: 2.4% (1/42)
+  avg_duration_ms: 1840.00
+  avg_tokens_per_run: 412.00
+context_management:
+  cache_read_rate: 71.3% (118204 cached input tokens)
+  context_chars_cleared: 86310
+  context_recoveries: 2
+review:
+  review_rate: 7.1% (3/42)
+  pending_reviews: 1
+  acceptance_rate: 66.7% (2 resolved)
+parser_health:
+  avg_confidence_last_50: 0.87
+  low_confidence_rate_last_50: 7.7% (12/50)
+reconcile:
+  last_run: 2026-06-20 09:14:02
+  last_result: ok
+  orphan_files: 0
+  missing_files: 0
 ```
+
+### Context-engineering benchmark
+
+`snowball bench context` simulates the exact message list `SnowballAgent` would send to a real model on every step, then measures bytes — once with the optimizations on, once with them off — and reconstructs the cache-hit accounting the same way the Anthropic API does (longest byte-identical message prefix between consecutive requests). It needs no API key and no live model: heuristic and stub adapters return hard-coded token counts, so this is the only honest way to show what the budget and prefix cache are actually worth.
+
+**Bounded turn — 6 steps, ~1500-char tool excerpts** (typical retrieval-heavy run):
+
+| config | fresh tokens | cache reads | cache rate | savings vs baseline | peak step tokens |
+|---|---:|---:|---:|---:|---:|
+| baseline | 25,770 | 0 | 0.0% | 0.0% | 7,345 |
+| budget_only | 18,833 | 0 | 0.0% | 26.9% | 3,877 |
+| cache_only | 7,345 | 18,425 | **71.5%** | **71.5%** | 7,345 |
+| budget_and_cache | 14,729 | 4,103 | 21.8% | 42.8% | 3,877 |
+
+**Stress turn — 12 steps, ~6000-char tool excerpts** (deep retrieval, long note bodies):
+
+| config | fresh tokens | cache reads | cache rate | savings vs baseline | peak step tokens |
+|---|---:|---:|---:|---:|---:|
+| baseline | 358,734 | 0 | 0.0% | 0.0% | **55,174** ⚠️ |
+| budget_only | 109,513 | 0 | 0.0% | 69.5% | 9,860 |
+| cache_only | 55,174 | 303,560 | **84.6%** | **84.6%** | **55,174** ⚠️ |
+| budget_and_cache | 101,338 | 8,175 | 7.5% | 71.8% | **9,860** |
+
+**Reading the tables** — the two layers solve different problems and pull in different directions:
+
+- **Prefix caching** dominates on *cumulative* cost. As long as the request prefix is byte-stable across steps, every step after the first reads it for free, so total fresh input grows almost linearly with output size, not input size. At small scale this captures most of the win.
+- **The tool-result budget** is what bounds *peak single-step pressure* — the column that decides whether you fit in the context window at all. `cache_only` saves on billing but still tries to send 55K tokens in one step on the stress run; that's the request that throws `400: max_tokens_to_sample exceeded` on a real run.
+- **Frozen replacement decisions** are the bridge: once the budget clears a result, those bytes stay cleared, so the prefix re-stabilizes and the cache rebuilds. That is why `budget_and_cache` keeps 71.8% savings at peak load even though its cache rate drops — it's preserving cache *after* the clearing events.
+- The cost of the budget at small scale is real: in the bounded run, `budget_and_cache` (42.8%) trails `cache_only` (71.5%) because every clearing event invalidates an earlier message. The shipped configuration accepts that tradeoff to stay safe under unbounded tool outputs, which is exactly the regime the [recovery gradient](#recovery-gradient) is built for.
+
+Reproduce: `snowball bench context [--steps N --tool-result-size S]`.
 
 ### Eval: Heuristic vs DeepSeek (25 cases, 6 decision types)
 
@@ -280,6 +372,32 @@ PYTHONPATH=src python3 -m snowball_notes.cli eval run
 
 The default configuration writes runtime data under `./data`, logs under `./logs`, and notes under `./vault`. Update `config.yaml` to point at your real Obsidian vault when you are ready.
 
+## Development
+
+CI runs on every push and pull request (`.github/workflows/ci.yml`): lint + import order (`ruff`), static types (`mypy`), the `unittest` suite across Python 3.11–3.13, and an offline end-to-end eval smoke on the heuristic adapter (no API keys). Reproduce locally:
+
+```bash
+pip install -e ".[dev]"
+
+ruff check .                                   # lint + import order
+mypy                                           # static type check (src/)
+PYTHONPATH=src python3 -m unittest discover -s tests
+
+# Offline end-to-end smoke (heuristic adapter + local embeddings, no keys)
+PYTHONPATH=src python3 -m snowball_notes.cli --config ci/offline.config.yaml eval load eval/fixtures/sample_cases.json --replace
+PYTHONPATH=src python3 -m snowball_notes.cli --config ci/offline.config.yaml eval run
+```
+
+### Docker
+
+```bash
+docker build -t snowball-notes .
+docker run --rm snowball-notes            # prints health for the bundled offline config
+docker run --rm snowball-notes worker --once
+```
+
+The image runs the offline configuration by default (heuristic adapter, local embeddings — no API keys). Mount a config and pass provider keys via `-e` / `-v` to use a hosted model.
+
 ## Configuration
 
 ### Environment file
@@ -312,7 +430,26 @@ agent:
 agent:
   provider: "openai_responses"
   model: "gpt-5.2-codex"
+
+# Anthropic Claude (Messages API, tool use)
+agent:
+  provider: "anthropic"
+  model: "claude-opus-4-8"
+  api_key_env: "ANTHROPIC_API_KEY"
+  max_output_tokens: 4096
+  enable_prompt_cache: true   # cache tools + system prompt across steps
+  thinking: "off"             # set "adaptive" once content blocks are replayed
 ```
+
+The Anthropic adapter rebuilds the full `messages` array on every step (the API
+is stateless) and places two cache breakpoints: one on the static system prompt
+(caches tools + system) and one on the last block of the most recent turn (caches
+the growing conversation prefix across ReAct steps). After the first step each
+step reads the entire prior context from cache and pays full price only for the
+newest turn (`usage.cache_read_input_tokens` confirms the hit). This is only
+sound because the frozen tool-result budget keeps earlier blocks byte-stable. It
+is wired into the same `AgentTrace` / `ReplayBundle` / eval path as the other
+providers — no model is treated specially by the runtime.
 
 ### Embedding providers
 

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from .utils import now_utc, now_utc_iso
+from .utils import now_utc_iso
 
 
 class RunState(str, Enum):
@@ -177,6 +177,8 @@ class ToolCall:
 class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 @dataclass
@@ -223,7 +225,10 @@ class AgentTrace:
     final_confidence: float | None = None
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_read_input_tokens: int = 0
     total_duration_ms: int = 0
+    context_chars_cleared: int = 0
+    context_recoveries: int = 0
     steps: list[TraceStep] = field(default_factory=list)
 
     def record_step(
@@ -259,6 +264,7 @@ class AgentTrace:
         self.total_steps = max(self.total_steps, step_index + 1)
         self.total_input_tokens += usage.input_tokens
         self.total_output_tokens += usage.output_tokens
+        self.total_cache_read_input_tokens += usage.cache_read_input_tokens
 
     def finish(self, final_decision: str, terminal_reason: str, confidence: float | None = None) -> None:
         self.finished_at = now_utc_iso()
@@ -285,7 +291,10 @@ class AgentTrace:
             "final_confidence": self.final_confidence,
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
+            "total_cache_read_input_tokens": self.total_cache_read_input_tokens,
             "total_duration_ms": self.total_duration_ms,
+            "context_chars_cleared": self.context_chars_cleared,
+            "context_recoveries": self.context_recoveries,
             "steps": [step.to_dict() for step in self.steps],
         }
 

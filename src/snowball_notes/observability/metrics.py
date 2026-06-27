@@ -45,6 +45,14 @@ def render_status(db, window_days: int = 7) -> str:
     lines.append(f"  avg_duration_ms: {_fmt_number(agent_health['avg_duration_ms'])}")
     lines.append(f"  avg_tokens_per_run: {_fmt_number(agent_health['avg_tokens_per_run'])}")
 
+    lines.append("context_management:")
+    lines.append(
+        f"  cache_read_rate: {_fmt_rate(agent_health['cache_read_rate'])} "
+        f"({agent_health['cache_read_tokens']} cached input tokens)"
+    )
+    lines.append(f"  context_chars_cleared: {agent_health['context_chars_cleared']}")
+    lines.append(f"  context_recoveries: {agent_health['context_recoveries']}")
+
     lines.append("review:")
     lines.append(
         f"  review_rate: {_fmt_rate(agent_health['review_rate'])} "

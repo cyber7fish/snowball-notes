@@ -39,7 +39,7 @@ def scan_transcripts(config: SnowballConfig, db) -> list:
 
 
 def watch_transcripts(config: SnowballConfig, db, watch_state: IntakeWatchState) -> list:
-    events = []
+    events: list = []
     transcript_dir = config.transcript_dir
     if not transcript_dir.exists():
         return events

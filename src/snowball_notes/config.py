@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import ast
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-import os
-import re
 
 from .utils import parse_scalar
 
@@ -50,6 +50,16 @@ class AgentConfig:
     api_key_env: str = "OPENAI_API_KEY"
     api_base_url: str = "https://api.openai.com/v1/responses"
     reasoning_effort: str = "medium"
+    max_output_tokens: int = 4096
+    enable_prompt_cache: bool = True
+    thinking: str = "off"
+    enable_context_budget: bool = True
+    max_tool_result_chars: int = 16000
+    keep_recent_tool_results: int = 2
+    enable_context_recovery: bool = True
+    compact_token_soft_limit: int = 12000
+    compact_token_hard_limit: int = 20000
+    keep_recent_turns: int = 2
 
 
 @dataclass

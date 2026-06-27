@@ -8,13 +8,12 @@ from typing import Any
 from ..config import SnowballConfig
 from ..note_cleanup import (
     format_obsidian_link,
+    rewrite_wikilink_target,
     sanitize_note_markdown,
     strip_leading_page_heading,
-    rewrite_wikilink_target,
     update_wikilink_titles,
 )
 from ..utils import ensure_directory, now_utc_iso, safe_read_text, sha256_text, write_atomic_text
-
 
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\\\|?*\x00-\x1f]')
 SPACE_RE = re.compile(r"\s+")

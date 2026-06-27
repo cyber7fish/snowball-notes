@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 QUALITY_METRICS = [
     ("decision_accuracy", "Decision accuracy"),
     ("target_note_accuracy", "Target note accuracy"),
@@ -43,7 +42,7 @@ def render_eval_report(report: dict, baseline: dict | None = None) -> str:
     has_baseline = baseline is not None
     prompt_ver = report["prompt_version"]
     header = f"Eval Results — {prompt_ver}"
-    if has_baseline:
+    if baseline is not None:
         header += f" vs {baseline['prompt_version']}"
     sep = "─" * max(50, len(header) + 4)
     lines = [header, sep, f"run_id: {report['run_id']}", f"model: {report['model_name']}",
@@ -59,7 +58,7 @@ def render_eval_report(report: dict, baseline: dict | None = None) -> str:
             if value is None:
                 continue
             rendered = _format_metric(key, value)
-            if not has_baseline or baseline.get(key) is None:
+            if baseline is None or baseline.get(key) is None:
                 lines.append(f"  {label:.<36s} {rendered}")
             else:
                 base_val = baseline[key]

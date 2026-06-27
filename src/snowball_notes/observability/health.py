@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from collections import Counter
 from datetime import timedelta
+from typing import Any
 
 from ..utils import now_utc, parse_datetime
-
 
 APPROVED_REVIEW_ACTIONS = {
     "approved",
@@ -44,13 +44,14 @@ def collect_parser_health(db, sample_size: int = 50) -> dict[str, float | int | 
     }
 
 
-def collect_agent_health(db, window_days: int = 7) -> dict[str, object]:
+def collect_agent_health(db, window_days: int = 7) -> dict[str, Any]:
     cutoff = now_utc() - timedelta(days=window_days)
     trace_rows = _filter_recent_rows(
         db.fetchall(
             """
             SELECT created_at, final_decision, total_steps, total_duration_ms,
-                   total_input_tokens, total_output_tokens, exceeded_max_steps, trace_json
+                   total_input_tokens, total_output_tokens, total_cache_read_input_tokens,
+                   context_chars_cleared, context_recoveries, exceeded_max_steps, trace_json
             FROM agent_traces
             ORDER BY created_at DESC
             """
@@ -88,6 +89,12 @@ def collect_agent_health(db, window_days: int = 7) -> dict[str, object]:
         int(row["total_input_tokens"] or 0) + int(row["total_output_tokens"] or 0)
         for row in trace_rows
     )
+    total_input_tokens = sum(int(row["total_input_tokens"] or 0) for row in trace_rows)
+    total_cache_read_tokens = sum(int(row["total_cache_read_input_tokens"] or 0) for row in trace_rows)
+    total_context_chars_cleared = sum(int(row["context_chars_cleared"] or 0) for row in trace_rows)
+    total_context_recoveries = sum(int(row["context_recoveries"] or 0) for row in trace_rows)
+    # Cache hit rate over input tokens: cache reads / (uncached input + cache reads).
+    cacheable_input = total_input_tokens + total_cache_read_tokens
     exceeded_max_steps = sum(int(row["exceeded_max_steps"] or 0) for row in trace_rows)
 
     tool_calls = 0
@@ -118,6 +125,10 @@ def collect_agent_health(db, window_days: int = 7) -> dict[str, object]:
         "avg_steps": (total_steps / agent_runs) if agent_runs else None,
         "avg_duration_ms": (total_duration_ms / agent_runs) if agent_runs else None,
         "avg_tokens_per_run": (total_tokens / agent_runs) if agent_runs else None,
+        "cache_read_tokens": total_cache_read_tokens,
+        "cache_read_rate": (total_cache_read_tokens / cacheable_input) if cacheable_input else None,
+        "context_chars_cleared": total_context_chars_cleared,
+        "context_recoveries": total_context_recoveries,
         "max_steps_exceeded_count": exceeded_max_steps,
         "max_steps_exceeded_rate": (exceeded_max_steps / agent_runs) if agent_runs else None,
         "tool_call_count": tool_calls,

@@ -24,8 +24,9 @@ def save_agent_trace(db, trace: AgentTrace) -> None:
           trace_id, turn_id, event_id, prompt_version, model_name,
           started_at, finished_at, total_steps, exceeded_max_steps,
           terminal_reason, final_decision, final_confidence,
-          total_input_tokens, total_output_tokens, total_duration_ms, trace_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          total_input_tokens, total_output_tokens, total_cache_read_input_tokens,
+          total_duration_ms, context_chars_cleared, context_recoveries, trace_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload["trace_id"],
@@ -42,7 +43,10 @@ def save_agent_trace(db, trace: AgentTrace) -> None:
             payload["final_confidence"],
             payload["total_input_tokens"],
             payload["total_output_tokens"],
+            payload["total_cache_read_input_tokens"],
             payload["total_duration_ms"],
+            payload["context_chars_cleared"],
+            payload["context_recoveries"],
             json.dumps(payload, ensure_ascii=False),
         ),
     )

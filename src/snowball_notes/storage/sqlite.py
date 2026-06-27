@@ -9,7 +9,6 @@ from typing import Any, Iterator
 
 from ..utils import ensure_directory
 
-
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS conversation_events (
   event_id TEXT PRIMARY KEY,
@@ -103,7 +102,10 @@ CREATE TABLE IF NOT EXISTS agent_traces (
   final_confidence REAL,
   total_input_tokens INTEGER,
   total_output_tokens INTEGER,
+  total_cache_read_input_tokens INTEGER DEFAULT 0,
   total_duration_ms INTEGER,
+  context_chars_cleared INTEGER DEFAULT 0,
+  context_recoveries INTEGER DEFAULT 0,
   trace_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -225,7 +227,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 class Database:
     def __init__(self, path: Path):
         self.path = path
-        self.event_logger = None
+        self.event_logger: Any = None
         ensure_directory(path.parent)
         self._connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._connection.row_factory = sqlite3.Row
@@ -239,6 +241,9 @@ class Database:
         self._ensure_column("review_actions", "suggested_action", "TEXT")
         self._ensure_column("review_actions", "suggested_target_note_id", "TEXT")
         self._ensure_column("review_actions", "suggested_payload_json", "TEXT")
+        self._ensure_column("agent_traces", "total_cache_read_input_tokens", "INTEGER DEFAULT 0")
+        self._ensure_column("agent_traces", "context_chars_cleared", "INTEGER DEFAULT 0")
+        self._ensure_column("agent_traces", "context_recoveries", "INTEGER DEFAULT 0")
         self._connection.commit()
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:

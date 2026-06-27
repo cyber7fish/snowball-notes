@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..models import ActionProposal, SessionMemory, StandardEvent
+from .context_budget import ContentReplacementState
 
 
 @dataclass
@@ -21,3 +22,5 @@ class AgentState:
     knowledge_snapshot_refs: list[dict[str, Any]] = field(default_factory=list)
     tool_context: dict[str, list[Any]] = field(default_factory=dict)
     model_context: dict[str, Any] = field(default_factory=dict)
+    replacement_state: ContentReplacementState = field(default_factory=ContentReplacementState)
+    recovery_events: list[dict[str, Any]] = field(default_factory=list)

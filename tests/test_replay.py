@@ -8,7 +8,7 @@ from snowball_notes.config import default_config
 from snowball_notes.models import RunState, StandardEvent
 from snowball_notes.storage.sqlite import Database
 from snowball_notes.storage.vault import Vault
-from snowball_notes.utils import new_id, now_utc_iso, sha256_text
+from snowball_notes.utils import new_id, now_utc_iso
 
 
 def _sample_event(**overrides) -> StandardEvent:
